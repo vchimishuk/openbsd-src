@@ -133,7 +133,7 @@ struct ctlname {
 #define	KERN_SOMINCONN		29	/* int: half-open controllable param */
 /* was KERN_USERMOUNT		30	*/
 /* was KERN_RND	31			*/
-#define	KERN_NOSUIDCOREDUMP	32	/* int: no setuid coredumps ever */ 
+#define	KERN_NOSUIDCOREDUMP	32	/* int: no setuid coredumps ever */
 #define	KERN_FSYNC		33	/* int: file synchronization support */
 #define	KERN_SYSVMSG		34	/* int: SysV message queue support */
 #define	KERN_SYSVSEM		35	/* int: SysV semaphore support */
@@ -950,7 +950,8 @@ struct kinfo_file {
 #define	HW_POWER		26	/* int: machine has wall-power */
 #define	HW_BATTERY		27	/* node: battery */
 #define	HW_UCOMNAMES		28	/* strings: ucom names */
-#define	HW_MAXID		30	/* number of valid hw ids */
+#define	HW_FANLEVEL		29	/* int: fan level */
+#define	HW_MAXID		31	/* number of valid hw ids */
 
 #define	CTL_HW_NAMES { \
 	{ 0, 0 }, \
@@ -982,6 +983,7 @@ struct kinfo_file {
 	{ "power", CTLTYPE_INT }, \
 	{ "battery", CTLTYPE_NODE }, \
 	{ "ucomnames", CTLTYPE_STRING }, \
+	{ "fanlevel", CTLTYPE_INT }, \
 }
 
 /*

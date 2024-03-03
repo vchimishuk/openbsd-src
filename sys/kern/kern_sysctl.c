@@ -147,10 +147,14 @@ int sysctl_video(int *, u_int, void *, size_t *, void *, size_t);
 int sysctl_cpustats(int *, u_int, void *, size_t *, void *, size_t);
 int sysctl_utc_offset(void *, size_t *, void *, size_t);
 int sysctl_hwbattery(int *, u_int, void *, size_t *, void *, size_t);
+int sysctl_hwfanlevel(int *, u_int, void *, size_t *, void *, size_t);
 
 void fill_file(struct kinfo_file *, struct file *, struct filedesc *, int,
     struct vnode *, struct process *, struct proc *, struct socket *, int);
 void fill_kproc(struct process *, struct kinfo_proc *, struct proc *, int);
+
+int thinkpad_get_fan_level();
+int thinkpad_set_fan_level(int);
 
 int (*cpu_cpuspeed)(int *);
 
@@ -786,6 +790,9 @@ hw_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 	case HW_BATTERY:
 		return (sysctl_hwbattery(name + 1, namelen - 1, oldp, oldlenp,
 		    newp, newlen));
+	case HW_FANLEVEL:
+		return (sysctl_hwfanlevel(name + 1, namelen - 1, oldp, oldlenp,
+		    newp, newlen));
 #endif
 	default:
 		return sysctl_bounded_arr(hw_vars, nitems(hw_vars), name,
@@ -883,6 +890,22 @@ sysctl_hwbattery(int *name, u_int namelen, void *oldp, size_t *oldlenp,
 	/* NOTREACHED */
 }
 
+int
+sysctl_hwfanlevel(int *name, u_int namelen, void *oldp, size_t *oldlenp,
+    void *newp, size_t newlen)
+{
+        int level = thinkpad_get_fan_level();
+	int err = sysctl_int_bounded(oldp, oldlenp, newp, newlen,
+	    &level, 0, 128);
+	if (err)
+		return err;
+
+        if (newp != NULL) {
+                return thinkpad_set_fan_level(level);
+        }
+
+        return 0;
+}
 #endif
 
 #ifdef DEBUG_SYSCTL

@@ -114,9 +114,11 @@
 
 #define THINKPAD_SENSOR_FANRPM		0
 #define THINKPAD_SENSOR_PORTREPL	1
-#define THINKPAD_SENSOR_TMP0		2
+#define THINKPAD_SENSOR_FANLVL          2
+#define THINKPAD_SENSOR_TMP0		3
 #define THINKPAD_NSENSORS		10
 
+#define THINKPAD_ECOFFSET_FANLVL	0x2F
 #define THINKPAD_ECOFFSET_VOLUME	0x30
 #define THINKPAD_ECOFFSET_VOLUME_MUTE_MASK 0x40
 #define THINKPAD_ECOFFSET_FANLO		0x84
@@ -134,6 +136,17 @@
 #define THINKPAD_BATTERY_SUPPORT	0x00000100
 #define THINKPAD_BATTERY_SUPPORT_BICG	0x00000020
 #define THINKPAD_BATTERY_SHIFT		8
+
+#define THINKPAD_FAN_LEVEL0		0x00
+#define THINKPAD_FAN_LEVEL1		0x01
+#define THINKPAD_FAN_LEVEL2		0x02
+#define THINKPAD_FAN_LEVEL3		0x03
+#define THINKPAD_FAN_LEVEL4		0x04
+#define THINKPAD_FAN_LEVEL5		0x05
+#define THINKPAD_FAN_LEVEL6		0x06
+#define THINKPAD_FAN_LEVEL7		0x07
+#define THINKPAD_FAN_UNTHROTTLE		0x40
+#define THINKPAD_FAN_AUTO		0x80
 
 struct acpithinkpad_softc {
 	struct device		 sc_dev;
@@ -156,6 +169,7 @@ struct acpithinkpad_softc {
 };
 
 extern void acpiec_read(struct acpiec_softc *, uint8_t, int, uint8_t *);
+extern void acpiec_write_1(struct acpiec_softc *, uint8_t, uint8_t);
 
 int	thinkpad_match(struct device *, void *, void *);
 void	thinkpad_attach(struct device *, struct device *, void *);
@@ -222,6 +236,19 @@ const char *acpithinkpad_hids[] = {
 	NULL
 };
 
+/* Possible values are:
+ *  0   - level 0
+ *  1   - level 1
+ *  2   - level 2
+ *  3   - level 3
+ *  4   - level 4
+ *  5   - level 5
+ *  6   - level 6
+ *  7   - level 7
+ *  8   - unthrottled
+ *  128 - automatic */
+static uint8_t fan_level = THINKPAD_FAN_AUTO;
+
 int
 thinkpad_match(struct device *parent, void *match, void *aux)
 {
@@ -277,7 +304,34 @@ thinkpad_sensor_attach(struct acpithinkpad_softc *sc)
 	        sizeof(sc->sc_sens[THINKPAD_SENSOR_PORTREPL].desc));
 	sensor_attach(&sc->sc_sensdev, &sc->sc_sens[THINKPAD_SENSOR_PORTREPL]);
 
+	sc->sc_sens[THINKPAD_SENSOR_FANLVL].type = SENSOR_INTEGER;
+	sc->sc_sens[THINKPAD_SENSOR_FANLVL].status = SENSOR_S_UNKNOWN;
+	sensor_attach(&sc->sc_sensdev, &sc->sc_sens[THINKPAD_SENSOR_FANLVL]);
+
 	sensordev_install(&sc->sc_sensdev);
+}
+
+int
+thinkpad_set_fan_level(int level)
+{
+    uint8_t l = level;
+    if (l < THINKPAD_FAN_LEVEL0) {
+        return EINVAL;
+    }
+    if (l > THINKPAD_FAN_LEVEL7
+        && l != THINKPAD_FAN_UNTHROTTLE
+        && l != THINKPAD_FAN_AUTO) {
+        return EINVAL;
+    }
+
+    fan_level = l;
+    return 0;
+}
+
+int
+thinkpad_get_fan_level()
+{
+    return fan_level;
 }
 
 void
@@ -309,6 +363,18 @@ thinkpad_sensor_refresh(void *arg)
 		sc->sc_sens[THINKPAD_SENSOR_FANRPM].value = ((hi << 8L) + lo);
  		sc->sc_sens[THINKPAD_SENSOR_FANRPM].flags = 0;
 	}
+
+        /* Read fan level */
+        uint8_t level;
+        acpiec_read(sc->sc_ec, THINKPAD_ECOFFSET_FANLVL, 1, &level);
+        sc->sc_sens[THINKPAD_SENSOR_FANLVL].value = level;
+
+        if (level != fan_level) {
+            acpiec_write_1(sc->sc_ec, THINKPAD_ECOFFSET_FANLVL, fan_level);
+            acpiec_read(sc->sc_ec, THINKPAD_ECOFFSET_FANLVL, 1, &level);
+            sc->sc_sens[THINKPAD_SENSOR_FANLVL].value = level;
+            fan_level = level;
+        }
 }
 
 void
@@ -499,7 +565,7 @@ thinkpad_hotkey(struct aml_node *node, int notify_type, void *arg)
 		case THINKPAD_BUTTON_SUSPEND:
 #ifndef SMALL_KERNEL
 			if (acpi_record_event(sc->sc_acpi, APM_USER_SUSPEND_REQ))
-				acpi_addtask(sc->sc_acpi, acpi_sleep_task, 
+				acpi_addtask(sc->sc_acpi, acpi_sleep_task,
 				    sc->sc_acpi, SLEEP_SUSPEND);
 #endif
 			break;
@@ -520,7 +586,7 @@ thinkpad_hotkey(struct aml_node *node, int notify_type, void *arg)
 		case THINKPAD_BUTTON_HIBERNATE:
 #if defined(HIBERNATE) && !defined(SMALL_KERNEL)
 			if (acpi_record_event(sc->sc_acpi, APM_USER_HIBERNATE_REQ))
-				acpi_addtask(sc->sc_acpi, acpi_sleep_task, 
+				acpi_addtask(sc->sc_acpi, acpi_sleep_task,
 				    sc->sc_acpi, SLEEP_HIBERNATE);
 #endif
 			break;
@@ -536,12 +602,12 @@ thinkpad_hotkey(struct aml_node *node, int notify_type, void *arg)
 			break;
 		case THINKPAD_PORT_REPL_DOCKED:
 			sc->sc_sens[THINKPAD_SENSOR_PORTREPL].value = 1;
-			sc->sc_sens[THINKPAD_SENSOR_PORTREPL].status = 
+			sc->sc_sens[THINKPAD_SENSOR_PORTREPL].status =
 			    SENSOR_S_OK;
 			break;
 		case THINKPAD_PORT_REPL_UNDOCKED:
 			sc->sc_sens[THINKPAD_SENSOR_PORTREPL].value = 0;
-			sc->sc_sens[THINKPAD_SENSOR_PORTREPL].status = 
+			sc->sc_sens[THINKPAD_SENSOR_PORTREPL].status =
 			    SENSOR_S_OK;
 			break;
 		default:
