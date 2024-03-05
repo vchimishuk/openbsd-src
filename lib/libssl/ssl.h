@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl.h,v 1.233 2024/02/03 15:58:33 beck Exp $ */
+/* $OpenBSD: ssl.h,v 1.236 2024/03/02 11:48:55 tb Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -1058,10 +1058,6 @@ const SSL_METHOD *SSL_CTX_get_ssl_method(const SSL_CTX *ctx);
 	SSL_ctrl(s, SSL_CTRL_GET_PEER_SIGNATURE_NID, 0, pn)
 #define SSL_get_peer_tmp_key(s, pk) \
 	SSL_ctrl(s, SSL_CTRL_GET_PEER_TMP_KEY, 0, pk)
-
-int SSL_get_signature_type_nid(const SSL *ssl, int *nid);
-int SSL_get_peer_signature_type_nid(const SSL *ssl, int *nid);
-
 #endif /* LIBRESSL_HAS_TLS1_3 || LIBRESSL_INTERNAL */
 
 #ifndef LIBRESSL_INTERNAL
@@ -1126,8 +1122,6 @@ int	SSL_clear(SSL *s);
 void	SSL_CTX_flush_sessions(SSL_CTX *ctx, long tm);
 
 const SSL_CIPHER *SSL_get_current_cipher(const SSL *s);
-const SSL_CIPHER *SSL_CIPHER_get_by_id(unsigned int id);
-const SSL_CIPHER *SSL_CIPHER_get_by_value(uint16_t value);
 int	SSL_CIPHER_get_bits(const SSL_CIPHER *c, int *alg_bits);
 const char *	SSL_CIPHER_get_version(const SSL_CIPHER *c);
 const char *	SSL_CIPHER_get_name(const SSL_CIPHER *c);
@@ -1502,7 +1496,6 @@ int SSL_set_session_ticket_ext_cb(SSL *s,
 int SSL_set_session_secret_cb(SSL *s,
     tls_session_secret_cb_fn tls_session_secret_cb, void *arg);
 
-void SSL_set_debug(SSL *s, int debug);
 int SSL_cache_hit(SSL *s);
 
 /* What the "other" parameter contains in security callback */

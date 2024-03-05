@@ -1,4 +1,4 @@
-/* $OpenBSD: stack.c,v 1.25 2024/02/26 15:00:30 tb Exp $ */
+/* $OpenBSD: stack.c,v 1.28 2024/03/02 11:20:36 tb Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -63,8 +63,13 @@
 #include <openssl/objects.h>
 #include <openssl/stack.h>
 
+#include "stack_local.h"
+
 #undef MIN_NODES
 #define MIN_NODES	4
+
+#define OBJ_BSEARCH_VALUE_ON_NOMATCH		0x01
+#define OBJ_BSEARCH_FIRST_VALUE_ON_MATCH	0x02
 
 int
 (*sk_set_cmp_func(_STACK *sk, int (*c)(const void *, const void *)))(
@@ -259,13 +264,6 @@ sk_find(_STACK *st, void *data)
 	return internal_find(st, data, OBJ_BSEARCH_FIRST_VALUE_ON_MATCH);
 }
 LCRYPTO_ALIAS(sk_find);
-
-int
-sk_find_ex(_STACK *st, void *data)
-{
-	return internal_find(st, data, OBJ_BSEARCH_VALUE_ON_NOMATCH);
-}
-LCRYPTO_ALIAS(sk_find_ex);
 
 int
 sk_push(_STACK *st, void *data)

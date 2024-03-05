@@ -1,4 +1,4 @@
-/*	$OpenBSD: evp_names.c,v 1.8 2024/01/27 18:12:27 tb Exp $ */
+/*	$OpenBSD: evp_names.c,v 1.12 2024/03/02 10:13:13 tb Exp $ */
 /*
  * Copyright (c) 2023 Theo Buehler <tb@openbsd.org>
  *
@@ -50,10 +50,6 @@ static const struct cipher_name cipher_names[] = {
 	{
 		.name = SN_aes_128_cbc,
 		.cipher = EVP_aes_128_cbc,
-	},
-	{
-		.name = SN_aes_128_cbc_hmac_sha1,
-		.cipher = EVP_aes_128_cbc_hmac_sha1,
 	},
 	{
 		.name = SN_aes_128_cfb128,
@@ -116,10 +112,6 @@ static const struct cipher_name cipher_names[] = {
 	{
 		.name = SN_aes_256_cbc,
 		.cipher = EVP_aes_256_cbc,
-	},
-	{
-		.name = SN_aes_256_cbc_hmac_sha1,
-		.cipher = EVP_aes_256_cbc_hmac_sha1,
 	},
 	{
 		.name = SN_aes_256_cfb128,
@@ -497,10 +489,6 @@ static const struct cipher_name cipher_names[] = {
 		.name = SN_rc4_40,
 		.cipher = EVP_rc4_40,
 	},
-	{
-		.name = SN_rc4_hmac_md5,
-		.cipher = EVP_rc4_hmac_md5,
-	},
 #endif /* OPENSSL_NO_RC4 */
 
 #ifndef OPENSSL_NO_SM4
@@ -536,10 +524,6 @@ static const struct cipher_name cipher_names[] = {
 	{
 		.name = LN_aes_128_cbc,
 		.cipher = EVP_aes_128_cbc,
-	},
-	{
-		.name = LN_aes_128_cbc_hmac_sha1,
-		.cipher = EVP_aes_128_cbc_hmac_sha1,
 	},
 	{
 		.name = LN_aes_128_ccm,
@@ -618,10 +602,6 @@ static const struct cipher_name cipher_names[] = {
 	{
 		.name = LN_aes_256_cbc,
 		.cipher = EVP_aes_256_cbc,
-	},
-	{
-		.name = LN_aes_256_cbc_hmac_sha1,
-		.cipher = EVP_aes_256_cbc_hmac_sha1,
 	},
 	{
 		.name = LN_aes_256_ccm,
@@ -1059,10 +1039,6 @@ static const struct cipher_name cipher_names[] = {
 	{
 		.name = LN_rc4_40,
 		.cipher = EVP_rc4_40,
-	},
-	{
-		.name = LN_rc4_hmac_md5,
-		.cipher = EVP_rc4_hmac_md5,
 	},
 #endif /* OPENSSL_NO_RC4 */
 
@@ -1787,7 +1763,7 @@ OBJ_NAME_from_cipher_name(OBJ_NAME *obj_name, const struct cipher_name *cipher)
 		obj_name->data = cipher->alias;
 	} else {
 		obj_name->alias = 0;
-		obj_name->data = (const char *)evp_cipher;
+		obj_name->data = evp_cipher;
 	}
 
 	return 1;
@@ -1822,7 +1798,7 @@ OBJ_NAME_from_digest_name(OBJ_NAME *obj_name, const struct digest_name *digest)
 		obj_name->data = digest->alias;
 	} else {
 		obj_name->alias = 0;
-		obj_name->data = (const char *)evp_md;
+		obj_name->data = evp_md;
 	}
 
 	return 1;
@@ -1914,67 +1890,3 @@ void
 EVP_cleanup(void)
 {
 }
-
-/*
- * XXX - Remove all the garbage below in the next bump.
- */
-
-int
-EVP_add_cipher(const EVP_CIPHER *c)
-{
-	return 1;
-}
-
-int
-EVP_add_digest(const EVP_MD *md)
-{
-	return 1;
-}
-
-int
-OBJ_NAME_init(void)
-{
-	OBJerror(ERR_R_DISABLED);
-	return 0;
-}
-LCRYPTO_ALIAS(OBJ_NAME_init);
-
-int
-OBJ_NAME_new_index(unsigned long (*hash_func)(const char *),
-    int (*cmp_func)(const char *, const char *),
-    void (*free_func)(const char *, int, const char *))
-{
-	OBJerror(ERR_R_DISABLED);
-	return 0;
-}
-LCRYPTO_ALIAS(OBJ_NAME_new_index);
-
-const char *
-OBJ_NAME_get(const char *name, int type)
-{
-	OBJerror(ERR_R_DISABLED);
-	return NULL;
-}
-LCRYPTO_ALIAS(OBJ_NAME_get);
-
-int
-OBJ_NAME_add(const char *name, int type, const char *data)
-{
-	/* No error to avoid polluting xca's error stack. */
-	return 0;
-}
-LCRYPTO_ALIAS(OBJ_NAME_add);
-
-int
-OBJ_NAME_remove(const char *name, int type)
-{
-	OBJerror(ERR_R_DISABLED);
-	return 0;
-}
-LCRYPTO_ALIAS(OBJ_NAME_remove);
-
-void
-OBJ_NAME_cleanup(int type)
-{
-}
-LCRYPTO_ALIAS(OBJ_NAME_cleanup);

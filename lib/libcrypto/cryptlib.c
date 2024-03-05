@@ -1,4 +1,4 @@
-/* $OpenBSD: cryptlib.c,v 1.47 2023/12/14 15:31:22 tb Exp $ */
+/* $OpenBSD: cryptlib.c,v 1.48 2024/03/02 11:37:13 tb Exp $ */
 /* ====================================================================
  * Copyright (c) 1998-2006 The OpenSSL Project.  All rights reserved.
  *
@@ -123,6 +123,8 @@
 
 #include <openssl/opensslconf.h>
 #include <openssl/crypto.h>
+
+#include "crypto_local.h"
 
 static void (*locking_callback)(int mode, int type,
     const char *file, int line) = NULL;

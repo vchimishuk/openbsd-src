@@ -1,4 +1,4 @@
-/*	$OpenBSD: qwx.c,v 1.52 2024/02/24 15:21:39 cheloha Exp $	*/
+/*	$OpenBSD: qwx.c,v 1.57 2024/03/02 15:18:57 stsp Exp $	*/
 
 /*
  * Copyright 2023 Stefan Sperling <stsp@openbsd.org>
@@ -151,6 +151,7 @@ int qwx_dp_tx_send_reo_cmd(struct qwx_softc *, struct dp_rx_tid *,
     enum hal_reo_cmd_type , struct ath11k_hal_reo_cmd *,
     void (*func)(struct qwx_dp *, void *, enum hal_reo_cmd_status));
 void qwx_dp_rx_deliver_msdu(struct qwx_softc *, struct qwx_rx_msdu *);
+void qwx_dp_service_mon_ring(void *);
 
 int qwx_scan(struct qwx_softc *);
 void qwx_scan_abort(struct qwx_softc *);
@@ -271,6 +272,8 @@ qwx_stop(struct ifnet *ifp)
 	int s = splnet();
 
 	rw_assert_wrlock(&sc->ioctl_rwl);
+
+	timeout_del(&sc->mon_reap_timer);
 
 	/* Disallow new tasks. */
 	set_bit(ATH11K_FLAG_CRASH_FLUSH, sc->sc_flags);
@@ -12793,6 +12796,7 @@ qwx_mgmt_rx_event(struct qwx_softc *sc, struct mbuf *m)
 	}
 #endif
 	ieee80211_input(ifp, m, ni, &rxi);
+	ieee80211_release_node(ic, ni);
 exit:
 #ifdef notyet
 	rcu_read_unlock();
@@ -13059,10 +13063,10 @@ qwx_wmi_tlv_op_rx(struct qwx_softc *sc, struct mbuf *m)
 	case WMI_PEER_ASSOC_CONF_EVENTID:
 		qwx_peer_assoc_conf_event(sc, m);
 		break;
-#if 0
 	case WMI_UPDATE_STATS_EVENTID:
-		ath11k_update_stats_event(ab, skb);
+		/* ignore */
 		break;
+#if 0
 	case WMI_PDEV_CTL_FAILSAFE_CHECK_EVENTID:
 		ath11k_pdev_ctl_failsafe_check_event(ab, skb);
 		break;
@@ -13898,8 +13902,8 @@ qwx_peer_unmap_event(struct qwx_softc *sc, uint16_t peer_id)
 		goto exit;
 	}
 
-	DPRINTF(QWX_D_HTT, "%s: peer unmap vdev %d peer %s id %d\n",
-	    __func__, peer->vdev_id, ether_sprintf(ni->ni_macaddr), peer_id);
+	DNPRINTF(QWX_D_HTT, "%s: peer unmap peer %s id %d\n",
+	    __func__, ether_sprintf(ni->ni_macaddr), peer_id);
 #if 0
 	list_del(&peer->list);
 	kfree(peer);
@@ -14129,11 +14133,7 @@ qwx_dp_rx_pdev_srng_alloc(struct qwx_softc *sc)
 	 * init reap timer for QCA6390.
 	 */
 	if (!sc->hw_params.rxdma1_enable) {
-#if 0
-		//init mon status buffer reap timer
-		timer_setup(&ar->ab->mon_reap_timer,
-			    ath11k_dp_service_mon_ring, 0);
-#endif
+		timeout_set(&sc->mon_reap_timer, qwx_dp_service_mon_ring, sc);
 		return 0;
 	}
 #if 0
@@ -14833,6 +14833,8 @@ void
 qwx_dp_pdev_free(struct qwx_softc *sc)
 {
 	int i;
+
+	timeout_del(&sc->mon_reap_timer);
 
 	for (i = 0; i < sc->num_radios; i++)
 		qwx_dp_rx_pdev_free(sc, i);
@@ -16540,7 +16542,6 @@ qwx_dp_rx_process_mon_status(struct qwx_softc *sc, int mac_id)
 	struct hal_rx_mon_ppdu_info *ppdu_info = &pmon->mon_ppdu_info;
 
 	num_buffs_reaped = qwx_dp_rx_reap_mon_status_ring(sc, mac_id, &ml);
-	printf("%s: processing %d packets\n", __func__, num_buffs_reaped);
 	if (!num_buffs_reaped)
 		goto exit;
 
@@ -16626,6 +16627,18 @@ qwx_dp_rx_process_mon_rings(struct qwx_softc *sc, int mac_id)
 		ret = qwx_dp_rx_process_mon_status(sc, mac_id);
 
 	return ret;
+}
+
+void
+qwx_dp_service_mon_ring(void *arg)
+{
+	struct qwx_softc *sc = arg;
+	int i;
+
+	for (i = 0; i < sc->hw_params.num_rxmda_per_pdev; i++)
+		qwx_dp_rx_process_mon_rings(sc, i);
+
+	timeout_add(&sc->mon_reap_timer, ATH11K_MON_TIMER_INTERVAL);
 }
 
 int
@@ -21332,7 +21345,7 @@ qwx_ce_rx_post_buf(struct qwx_softc *sc)
 		pipe = &sc->ce.ce_pipe[i];
 		ret = qwx_ce_rx_post_pipe(pipe);
 		if (ret) {
-			if (ret == ENOBUFS)
+			if (ret == ENOSPC)
 				continue;
 
 			printf("%s: failed to post rx buf to pipe: %d err: %d\n",
@@ -21436,7 +21449,7 @@ qwx_ce_recv_process_cb(struct qwx_ce_pipe *pipe)
 	}
 
 	err = qwx_ce_rx_post_pipe(pipe);
-	if (err && err != ENOBUFS) {
+	if (err && err != ENOSPC) {
 		printf("%s: failed to post rx buf to pipe: %d err: %d\n",
 		    __func__, pipe->pipe_num, err);
 #ifdef notyet
@@ -21746,7 +21759,7 @@ qwx_mac_config_mon_status_default(struct qwx_softc *sc, int enable)
 
 	if (enable)
 		tlv_filter = qwx_mac_mon_status_filter_default;
-#if 0
+#if 0 /* mon status info is not useful and the code triggers mbuf corruption */
 	for (i = 0; i < sc->hw_params.num_rxmda_per_pdev; i++) {
 		ring = &sc->pdev_dp.rx_mon_status_refill_ring[i];
 		ret = qwx_dp_tx_htt_rx_filter_setup(sc,
@@ -21755,11 +21768,11 @@ qwx_mac_config_mon_status_default(struct qwx_softc *sc, int enable)
 		if (ret)
 			return ret;
 	}
-#endif
-#if 0
-	if (enable && !ar->ab->hw_params.rxdma1_enable)
-		mod_timer(&ar->ab->mon_reap_timer, jiffies +
-			  msecs_to_jiffies(ATH11K_MON_TIMER_INTERVAL));
+
+	if (enable && !sc->hw_params.rxdma1_enable) {
+		timeout_add_msec(&sc->mon_reap_timer,
+		    ATH11K_MON_TIMER_INTERVAL);
+	}
 #endif
 	return ret;
 }
@@ -24526,7 +24539,7 @@ qwx_deauth(struct qwx_softc *sc)
 		return ret;
 
 	DNPRINTF(QWX_D_MAC, "%s: disassociated from bssid %s aid %d\n",
-	    __func__, arvif->vdev_id, ether_sprintf(ni->ni_bssid), arvif->aid);
+	    __func__, ether_sprintf(ni->ni_bssid), arvif->aid);
 
 	return 0;
 }

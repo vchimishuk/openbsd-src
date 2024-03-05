@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.252 2024/02/26 15:40:33 job Exp $ */
+/*	$OpenBSD: main.c,v 1.254 2024/03/01 09:36:55 job Exp $ */
 /*
  * Copyright (c) 2021 Claudio Jeker <claudio@openbsd.org>
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
@@ -72,6 +72,7 @@ int	filemode;
 int	shortlistmode;
 int	rrdpon = 1;
 int	repo_timeout;
+int	experimental;
 time_t	deadline;
 
 /* 9999-12-31 23:59:59 UTC */
@@ -671,7 +672,8 @@ entity_process(struct ibuf *b, struct stats *st, struct vrp_tree *tree,
 	case RTYPE_SPL:
 		io_read_buf(b, &c, sizeof(c));
 		if (c == 0) {
-			repo_stat_inc(rp, talid, type, STYPE_FAIL);
+			if (experimental)
+				repo_stat_inc(rp, talid, type, STYPE_FAIL);
 			break;
 		}
 		spl = spl_read(b);
@@ -895,9 +897,9 @@ load_shortlist(const char *fqdn)
 static void
 check_fs_size(int fd, const char *cachedir)
 {
-	struct statvfs	fs;
-	const long long	minsize = 500 * 1024 * 1024;
-	const long long	minnode = 300 * 1000;
+	struct statvfs		fs;
+	unsigned long long	minsize = 500 * 1024 * 1024;
+	unsigned long long	minnode = 300 * 1000;
 
 	if (fstatvfs(fd, &fs) == -1)
 		err(1, "statfs %s", cachedir);
@@ -907,13 +909,13 @@ check_fs_size(int fd, const char *cachedir)
 		fprintf(stderr, "WARNING: rpki-client may need more than "
 		    "the available disk space\n"
 		    "on the file-system holding %s.\n", cachedir);
-		fprintf(stderr, "available space: %lldkB, "
-		    "suggested minimum %lldkB\n",
-		    (long long)fs.f_bavail * fs.f_frsize / 1024,
+		fprintf(stderr, "available space: %llukB, "
+		    "suggested minimum %llukB\n",
+		    (unsigned long long)fs.f_bavail * fs.f_frsize / 1024,
 		    minsize / 1024);
-		fprintf(stderr, "available inodes %lld, "
-		    "suggested minimum %lld\n\n",
-		    (long long)fs.f_favail, minnode);
+		fprintf(stderr, "available inodes: %llu, "
+		    "suggested minimum: %llu\n\n",
+		    (unsigned long long)fs.f_favail, minnode);
 		fflush(stderr);
 	}
 }
@@ -998,7 +1000,7 @@ main(int argc, char *argv[])
 	    "proc exec unveil", NULL) == -1)
 		err(1, "pledge");
 
-	while ((c = getopt(argc, argv, "Ab:Bcd:e:fH:jmnoP:rRs:S:t:T:vV")) != -1)
+	while ((c = getopt(argc, argv, "Ab:Bcd:e:fH:jmnoP:rRs:S:t:T:vVx")) != -1)
 		switch (c) {
 		case 'A':
 			excludeaspa = 1;
@@ -1076,6 +1078,9 @@ main(int argc, char *argv[])
 		case 'V':
 			fprintf(stderr, "rpki-client %s\n", RPKI_VERSION);
 			return 0;
+		case 'x':
+			experimental = 1;
+			break;
 		default:
 			goto usage;
 		}
@@ -1509,7 +1514,7 @@ main(int argc, char *argv[])
 
 usage:
 	fprintf(stderr,
-	    "usage: rpki-client [-ABcjmnoRrVv] [-b sourceaddr] [-d cachedir]"
+	    "usage: rpki-client [-ABcjmnoRrVvx] [-b sourceaddr] [-d cachedir]"
 	    " [-e rsync_prog]\n"
 	    "                   [-H fqdn] [-P epoch] [-S skiplist] [-s timeout]"
 	    " [-T table]\n"

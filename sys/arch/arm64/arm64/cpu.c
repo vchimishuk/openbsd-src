@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.c,v 1.105 2024/02/23 21:52:12 kettenis Exp $	*/
+/*	$OpenBSD: cpu.c,v 1.108 2024/03/05 18:42:20 kettenis Exp $	*/
 
 /*
  * Copyright (c) 2016 Dale Rahn <drahn@dalerahn.com>
@@ -266,6 +266,13 @@ void	cpu_opp_kstat_attach(struct cpu_info *ci);
 void
 cpu_identify(struct cpu_info *ci)
 {
+	static uint64_t prev_id_aa64isar0;
+	static uint64_t prev_id_aa64isar1;
+	static uint64_t prev_id_aa64isar2;
+	static uint64_t prev_id_aa64mmfr0;
+	static uint64_t prev_id_aa64mmfr1;
+	static uint64_t prev_id_aa64pfr0;
+	static uint64_t prev_id_aa64pfr1;
 	uint64_t midr, impl, part;
 	uint64_t clidr, id;
 	uint32_t ctr, ccsidr, sets, ways, line;
@@ -481,6 +488,19 @@ cpu_identify(struct cpu_info *ci)
 	 */
 	if (impl == CPU_IMPL_APPLE)
 		ci->ci_serror = cpu_serror_apple;
+
+	/*
+	 * Skip printing CPU features if they are identical to the
+	 * previous CPU.
+	 */
+	if (READ_SPECIALREG(id_aa64isar0_el1) == prev_id_aa64isar0 &&
+	    READ_SPECIALREG(id_aa64isar1_el1) == prev_id_aa64isar1 &&
+	    READ_SPECIALREG(id_aa64isar2_el1) == prev_id_aa64isar2 &&
+	    READ_SPECIALREG(id_aa64mmfr0_el1) == prev_id_aa64mmfr0 &&
+	    READ_SPECIALREG(id_aa64mmfr1_el1) == prev_id_aa64mmfr1 &&
+	    READ_SPECIALREG(id_aa64pfr0_el1) == prev_id_aa64pfr0 &&
+	    READ_SPECIALREG(id_aa64pfr1_el1) == prev_id_aa64pfr1)
+		return;
 
 	/*
 	 * Print CPU features encoded in the ID registers.
@@ -766,7 +786,7 @@ cpu_identify(struct cpu_info *ci)
 	}
 
 	/*
-	 * ID_AA64PFR0
+	 * ID_AA64PFR1
 	 */
 	id = READ_SPECIALREG(id_aa64pfr1_el1);
 
@@ -781,6 +801,19 @@ cpu_identify(struct cpu_info *ci)
 	}
 	if (ID_AA64PFR1_SBSS(id) >= ID_AA64PFR1_SBSS_PSTATE_MSR)
 		printf("+MSR");
+
+	if (ID_AA64PFR1_MTE(id) >= ID_AA64PFR1_MTE_IMPL) {
+		printf("%sMTE", sep);
+		sep = ",";
+	}
+
+	prev_id_aa64isar0 = READ_SPECIALREG(id_aa64isar0_el1);
+	prev_id_aa64isar1 = READ_SPECIALREG(id_aa64isar1_el1);
+	prev_id_aa64isar2 = READ_SPECIALREG(id_aa64isar2_el1);
+	prev_id_aa64mmfr0 = READ_SPECIALREG(id_aa64mmfr0_el1);
+	prev_id_aa64mmfr1 = READ_SPECIALREG(id_aa64mmfr1_el1);
+	prev_id_aa64pfr0 = READ_SPECIALREG(id_aa64pfr0_el1);
+	prev_id_aa64pfr1 = READ_SPECIALREG(id_aa64pfr1_el1);
 
 #ifdef CPU_DEBUG
 	id = READ_SPECIALREG(id_aa64afr0_el1);
@@ -1006,6 +1039,13 @@ cpu_init(void)
 		sctlr = READ_SPECIALREG(sctlr_el1);
 		sctlr |= SCTLR_EnIA | SCTLR_EnDA;
 		sctlr |= SCTLR_EnIB | SCTLR_EnDB;
+		WRITE_SPECIALREG(sctlr_el1, sctlr);
+	}
+
+	/* Enable strict BTI compatibility for PACIASP and PACIBSP. */
+	if (ID_AA64PFR1_BT(cpu_id_aa64pfr1) >= ID_AA64PFR1_BT_IMPL) {
+		sctlr = READ_SPECIALREG(sctlr_el1);
+		sctlr |= SCTLR_BT0 | SCTLR_BT1;
 		WRITE_SPECIALREG(sctlr_el1, sctlr);
 	}
 

@@ -1,4 +1,4 @@
-/* $OpenBSD: evp_local.h,v 1.16 2024/02/18 15:43:21 tb Exp $ */
+/* $OpenBSD: evp_local.h,v 1.19 2024/03/02 10:20:27 tb Exp $ */
 /* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2000.
  */
@@ -340,9 +340,6 @@ struct evp_pkey_method_st {
 
 void evp_pkey_set_cb_translate(BN_GENCB *cb, EVP_PKEY_CTX *ctx);
 
-int PKCS5_v2_PBKDF2_keyivgen(EVP_CIPHER_CTX *ctx, const char *pass, int passlen,
-    ASN1_TYPE *param, const EVP_CIPHER *c, const EVP_MD *md, int en_de);
-
 /* EVP_AEAD represents a specific AEAD algorithm. */
 struct evp_aead_st {
 	unsigned char key_len;
@@ -372,6 +369,15 @@ struct evp_aead_ctx_st {
 	/* aead_state is an opaque pointer to the AEAD specific state. */
 	void *aead_state;
 };
+
+/* Legacy EVP_CIPHER methods used by CMS and its predecessors. */
+int EVP_CIPHER_set_asn1_iv(EVP_CIPHER_CTX *cipher, ASN1_TYPE *type);
+int EVP_CIPHER_asn1_to_param(EVP_CIPHER_CTX *cipher, ASN1_TYPE *type);
+int EVP_CIPHER_get_asn1_iv(EVP_CIPHER_CTX *cipher, ASN1_TYPE *type);
+int EVP_CIPHER_param_to_asn1(EVP_CIPHER_CTX *cipher, ASN1_TYPE *type);
+
+int EVP_PBE_CipherInit(ASN1_OBJECT *pbe_obj, const char *pass, int passlen,
+    ASN1_TYPE *param, EVP_CIPHER_CTX *ctx, int en_de);
 
 int EVP_PKEY_CTX_str2ctrl(EVP_PKEY_CTX *ctx, int cmd, const char *str);
 int EVP_PKEY_CTX_hex2ctrl(EVP_PKEY_CTX *ctx, int cmd, const char *hex);

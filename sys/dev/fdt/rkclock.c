@@ -1,4 +1,4 @@
-/*	$OpenBSD: rkclock.c,v 1.84 2023/11/26 13:47:45 kettenis Exp $	*/
+/*	$OpenBSD: rkclock.c,v 1.86 2024/03/02 19:48:13 kettenis Exp $	*/
 /*
  * Copyright (c) 2017, 2018 Mark Kettenis <kettenis@openbsd.org>
  *
@@ -3898,6 +3898,31 @@ const struct rkclock rk3588_clocks[] = {
 		{ RK3588_CLK_200M_SRC , RK3588_CLK_100M_SRC },
 	},
 	{
+		RK3588_CLK_SPI0, RK3588_CRU_CLKSEL_CON(59),
+		SEL(3, 2), 0,
+		{ RK3588_CLK_200M_SRC, RK3588_CLK_150M_SRC, RK3588_XIN24M },
+	},
+	{
+		RK3588_CLK_SPI1, RK3588_CRU_CLKSEL_CON(59),
+		SEL(5, 4), 0,
+		{ RK3588_CLK_200M_SRC, RK3588_CLK_150M_SRC, RK3588_XIN24M },
+	},
+	{
+		RK3588_CLK_SPI2, RK3588_CRU_CLKSEL_CON(59),
+		SEL(7, 6), 0,
+		{ RK3588_CLK_200M_SRC, RK3588_CLK_150M_SRC, RK3588_XIN24M },
+	},
+	{
+		RK3588_CLK_SPI3, RK3588_CRU_CLKSEL_CON(59),
+		SEL(9, 8), 0,
+		{ RK3588_CLK_200M_SRC, RK3588_CLK_150M_SRC, RK3588_XIN24M },
+	},
+	{
+		RK3588_CLK_SPI4, RK3588_CRU_CLKSEL_CON(59),
+		SEL(11, 10), 0,
+		{ RK3588_CLK_200M_SRC, RK3588_CLK_150M_SRC, RK3588_XIN24M },
+	},
+	{
 		RK3588_CLK_UART1_SRC, RK3588_CRU_CLKSEL_CON(41),
 		SEL(14, 14), DIV(13, 9),
 		{ RK3588_PLL_GPLL, RK3588_PLL_CPLL }
@@ -4106,6 +4131,11 @@ const struct rkclock rk3588_clocks[] = {
 		RK3588_CLK_GPU, 0, 0, 0,
 		{ RK3588_CLK_GPU_SRC },
 		SET_PARENT
+	},
+	{
+		RK3588_CLK_GMAC_125M, RK3588_CRU_CLKSEL_CON(83),
+		SEL(15, 15), DIV(14, 8),
+		{ RK3588_PLL_GPLL, RK3588_PLL_CPLL }
 	},
 	{
 		RK3588_CCLK_SRC_SDIO, RK3588_CRU_CLKSEL_CON(172),
@@ -4444,6 +4474,14 @@ rk3588_reset(void *cookie, uint32_t *cells, int on)
 	uint32_t bit, mask, reg;
 
 	switch (idx) {
+	case RK3588_SRST_A_GMAC0:
+		reg = RK3588_CRU_SOFTRST_CON(32);
+		bit = 10;
+		break;
+	case RK3588_SRST_A_GMAC1:
+		reg = RK3588_CRU_SOFTRST_CON(32);
+		bit = 11;
+		break;
 	case RK3588_SRST_PCIE0_POWER_UP:
 		reg = RK3588_CRU_SOFTRST_CON(32);
 		bit = 13;

@@ -1,4 +1,4 @@
-/* $OpenBSD: pmeth_lib.c,v 1.37 2024/01/13 12:46:59 tb Exp $ */
+/* $OpenBSD: pmeth_lib.c,v 1.39 2024/03/02 11:17:27 tb Exp $ */
 /* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2006.
  */
@@ -76,8 +76,6 @@ extern const EVP_PKEY_METHOD dh_pkey_meth;
 extern const EVP_PKEY_METHOD dsa_pkey_meth;
 extern const EVP_PKEY_METHOD ec_pkey_meth;
 extern const EVP_PKEY_METHOD ed25519_pkey_meth;
-extern const EVP_PKEY_METHOD gostimit_pkey_meth;
-extern const EVP_PKEY_METHOD gostr01_pkey_meth;
 extern const EVP_PKEY_METHOD hkdf_pkey_meth;
 extern const EVP_PKEY_METHOD hmac_pkey_meth;
 extern const EVP_PKEY_METHOD rsa_pkey_meth;
@@ -90,8 +88,6 @@ static const EVP_PKEY_METHOD *pkey_methods[] = {
 	&dsa_pkey_meth,
 	&ec_pkey_meth,
 	&ed25519_pkey_meth,
-	&gostimit_pkey_meth,
-	&gostr01_pkey_meth,
 	&hkdf_pkey_meth,
 	&hmac_pkey_meth,
 	&rsa_pkey_meth,
@@ -346,164 +342,4 @@ void *
 EVP_PKEY_CTX_get_app_data(EVP_PKEY_CTX *ctx)
 {
 	return ctx->app_data;
-}
-
-/*
- * Remove all the functions below in the next major bump
- */
-
-const EVP_PKEY_METHOD *
-EVP_PKEY_meth_find(int type)
-{
-	EVPerror(ERR_R_DISABLED);
-	return NULL;
-}
-
-EVP_PKEY_METHOD*
-EVP_PKEY_meth_new(int id, int flags)
-{
-	EVPerror(ERR_R_DISABLED);
-	return NULL;
-}
-
-void
-EVP_PKEY_meth_get0_info(int *ppkey_id, int *pflags, const EVP_PKEY_METHOD *meth)
-{
-}
-
-void
-EVP_PKEY_meth_copy(EVP_PKEY_METHOD *dst, const EVP_PKEY_METHOD *src)
-{
-}
-
-void
-EVP_PKEY_meth_free(EVP_PKEY_METHOD *pmeth)
-{
-}
-
-int
-EVP_PKEY_meth_add0(const EVP_PKEY_METHOD *pmeth)
-{
-	EVPerror(ERR_R_DISABLED);
-	return 0;
-}
-
-void
-EVP_PKEY_meth_set_init(EVP_PKEY_METHOD *pmeth,
-    int (*init)(EVP_PKEY_CTX *ctx))
-{
-}
-
-void
-EVP_PKEY_meth_set_copy(EVP_PKEY_METHOD *pmeth,
-    int (*copy)(EVP_PKEY_CTX *dst, EVP_PKEY_CTX *src))
-{
-}
-
-void
-EVP_PKEY_meth_set_cleanup(EVP_PKEY_METHOD *pmeth,
-    void (*cleanup)(EVP_PKEY_CTX *ctx))
-{
-}
-
-void
-EVP_PKEY_meth_set_paramgen(EVP_PKEY_METHOD *pmeth,
-    int (*paramgen_init)(EVP_PKEY_CTX *ctx),
-    int (*paramgen)(EVP_PKEY_CTX *ctx, EVP_PKEY *pkey))
-{
-}
-
-void
-EVP_PKEY_meth_set_keygen(EVP_PKEY_METHOD *pmeth,
-    int (*keygen_init)(EVP_PKEY_CTX *ctx),
-    int (*keygen)(EVP_PKEY_CTX *ctx, EVP_PKEY *pkey))
-{
-}
-
-void
-EVP_PKEY_meth_set_sign(EVP_PKEY_METHOD *pmeth,
-    int (*sign_init)(EVP_PKEY_CTX *ctx),
-    int (*sign)(EVP_PKEY_CTX *ctx, unsigned char *sig, size_t *siglen,
-    const unsigned char *tbs, size_t tbslen))
-{
-}
-
-void
-EVP_PKEY_meth_set_verify(EVP_PKEY_METHOD *pmeth,
-    int (*verify_init)(EVP_PKEY_CTX *ctx),
-    int (*verify)(EVP_PKEY_CTX *ctx, const unsigned char *sig, size_t siglen,
-    const unsigned char *tbs, size_t tbslen))
-{
-}
-
-void
-EVP_PKEY_meth_set_verify_recover(EVP_PKEY_METHOD *pmeth,
-    int (*verify_recover_init)(EVP_PKEY_CTX *ctx),
-    int (*verify_recover)(EVP_PKEY_CTX *ctx,
-    unsigned char *sig, size_t *siglen,
-    const unsigned char *tbs, size_t tbslen))
-{
-}
-
-void
-EVP_PKEY_meth_set_signctx(EVP_PKEY_METHOD *pmeth,
-    int (*signctx_init)(EVP_PKEY_CTX *ctx, EVP_MD_CTX *mctx),
-    int (*signctx)(EVP_PKEY_CTX *ctx, unsigned char *sig, size_t *siglen,
-    EVP_MD_CTX *mctx))
-{
-}
-
-void
-EVP_PKEY_meth_set_verifyctx(EVP_PKEY_METHOD *pmeth,
-    int (*verifyctx_init)(EVP_PKEY_CTX *ctx, EVP_MD_CTX *mctx),
-    int (*verifyctx)(EVP_PKEY_CTX *ctx, const unsigned char *sig, int siglen,
-    EVP_MD_CTX *mctx))
-{
-}
-
-void
-EVP_PKEY_meth_set_encrypt(EVP_PKEY_METHOD *pmeth,
-    int (*encrypt_init)(EVP_PKEY_CTX *ctx),
-    int (*encryptfn)(EVP_PKEY_CTX *ctx, unsigned char *out, size_t *outlen,
-    const unsigned char *in, size_t inlen))
-{
-}
-
-void
-EVP_PKEY_meth_set_decrypt(EVP_PKEY_METHOD *pmeth,
-    int (*decrypt_init)(EVP_PKEY_CTX *ctx),
-    int (*decrypt)(EVP_PKEY_CTX *ctx, unsigned char *out, size_t *outlen,
-    const unsigned char *in, size_t inlen))
-{
-}
-
-void
-EVP_PKEY_meth_set_derive(EVP_PKEY_METHOD *pmeth,
-    int (*derive_init)(EVP_PKEY_CTX *ctx),
-    int (*derive)(EVP_PKEY_CTX *ctx, unsigned char *key, size_t *keylen))
-{
-}
-
-void
-EVP_PKEY_meth_set_ctrl(EVP_PKEY_METHOD *pmeth,
-    int (*ctrl)(EVP_PKEY_CTX *ctx, int type, int p1, void *p2),
-    int (*ctrl_str)(EVP_PKEY_CTX *ctx, const char *type, const char *value))
-{
-}
-
-void
-EVP_PKEY_meth_set_check(EVP_PKEY_METHOD *pmeth, int (*check)(EVP_PKEY *pkey))
-{
-}
-
-void
-EVP_PKEY_meth_set_public_check(EVP_PKEY_METHOD *pmeth,
-    int (*public_check)(EVP_PKEY *pkey))
-{
-}
-
-void
-EVP_PKEY_meth_set_param_check(EVP_PKEY_METHOD *pmeth,
-    int (*param_check)(EVP_PKEY *pkey))
-{
 }

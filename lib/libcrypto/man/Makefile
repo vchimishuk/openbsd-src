@@ -1,4 +1,4 @@
-# $OpenBSD: Makefile,v 1.281 2024/01/22 13:44:59 job Exp $
+# $OpenBSD: Makefile,v 1.285 2024/03/05 18:30:40 tb Exp $
 
 .include <bsd.own.mk>
 
@@ -29,7 +29,6 @@ MAN=	\
 	ASN1_mbstring_copy.3 \
 	ASN1_parse_dump.3 \
 	ASN1_put_object.3 \
-	ASN1_time_parse.3 \
 	ASRange_new.3 \
 	AUTHORITY_KEYID_new.3 \
 	BASIC_CONSTRAINTS_new.3 \
@@ -170,7 +169,6 @@ MAN=	\
 	EVP_EncodeInit.3 \
 	EVP_EncryptInit.3 \
 	EVP_MD_CTX_ctrl.3 \
-	EVP_MD_meth_new.3 \
 	EVP_MD_nid.3 \
 	EVP_OpenInit.3 \
 	EVP_PKCS82PKEY.3 \
@@ -200,7 +198,6 @@ MAN=	\
 	EVP_SealInit.3 \
 	EVP_SignInit.3 \
 	EVP_VerifyInit.3 \
-	EVP_add_cipher.3 \
 	EVP_aes_128_cbc.3 \
 	EVP_camellia_128_cbc.3 \
 	EVP_chacha20.3 \
@@ -432,7 +429,6 @@ MAN=	\
 	i2d_CMS_bio_stream.3 \
 	i2d_PKCS7_bio_stream.3 \
 	lh_new.3 \
-	lh_stats.3 \
 	openssl.cnf.5 \
 	s2i_ASN1_INTEGER.3 \
 	x509v3.cnf.5

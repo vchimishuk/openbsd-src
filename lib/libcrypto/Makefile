@@ -1,4 +1,4 @@
-# $OpenBSD: Makefile,v 1.168 2024/02/18 16:28:37 tb Exp $
+# $OpenBSD: Makefile,v 1.174 2024/03/02 13:39:28 tb Exp $
 
 LIB=	crypto
 LIBREBUILD=y
@@ -40,11 +40,13 @@ CFLAGS+= -I${LCRYPTO_SRC}/evp
 CFLAGS+= -I${LCRYPTO_SRC}/hidden
 CFLAGS+= -I${LCRYPTO_SRC}/hmac
 CFLAGS+= -I${LCRYPTO_SRC}/kdf
+CFLAGS+= -I${LCRYPTO_SRC}/lhash
 CFLAGS+= -I${LCRYPTO_SRC}/modes
 CFLAGS+= -I${LCRYPTO_SRC}/ocsp
 CFLAGS+= -I${LCRYPTO_SRC}/pkcs12
 CFLAGS+= -I${LCRYPTO_SRC}/rsa
 CFLAGS+= -I${LCRYPTO_SRC}/sha
+CFLAGS+= -I${LCRYPTO_SRC}/stack
 CFLAGS+= -I${LCRYPTO_SRC}/ts
 CFLAGS+= -I${LCRYPTO_SRC}/x509
 
@@ -96,7 +98,6 @@ SRCS+= a_time_posix.c
 SRCS+= a_time_tm.c
 SRCS+= a_type.c
 SRCS+= a_utf8.c
-SRCS+= ameth_lib.c
 SRCS+= asn1_err.c
 SRCS+= asn1_gen.c
 SRCS+= asn1_item.c
@@ -349,7 +350,6 @@ SRCS+= bio_b64.c
 SRCS+= bio_enc.c
 SRCS+= bio_md.c
 SRCS+= e_aes.c
-SRCS+= e_aes_cbc_hmac_sha1.c
 SRCS+= e_bf.c
 SRCS+= e_camellia.c
 SRCS+= e_cast.c
@@ -357,12 +357,10 @@ SRCS+= e_chacha.c
 SRCS+= e_chacha20poly1305.c
 SRCS+= e_des.c
 SRCS+= e_des3.c
-SRCS+= e_gost2814789.c
 SRCS+= e_idea.c
 SRCS+= e_null.c
 SRCS+= e_rc2.c
 SRCS+= e_rc4.c
-SRCS+= e_rc4_hmac_md5.c
 SRCS+= e_sm4.c
 SRCS+= e_xcbc_d.c
 SRCS+= evp_aead.c
@@ -374,8 +372,6 @@ SRCS+= evp_key.c
 SRCS+= evp_names.c
 SRCS+= evp_pbe.c
 SRCS+= evp_pkey.c
-SRCS+= m_gost2814789.c
-SRCS+= m_gostr341194.c
 SRCS+= m_md4.c
 SRCS+= m_md5.c
 SRCS+= m_md5_sha1.c
@@ -385,7 +381,6 @@ SRCS+= m_sha1.c
 SRCS+= m_sha3.c
 SRCS+= m_sigver.c
 SRCS+= m_sm3.c
-SRCS+= m_streebog.c
 SRCS+= m_wp.c
 SRCS+= p_legacy.c
 SRCS+= p_lib.c
@@ -394,22 +389,6 @@ SRCS+= p_verify.c
 SRCS+= pmeth_fn.c
 SRCS+= pmeth_gn.c
 SRCS+= pmeth_lib.c
-
-# gost/
-SRCS+= gost2814789.c
-SRCS+= gost89_keywrap.c
-SRCS+= gost89_params.c
-SRCS+= gost89imit_ameth.c
-SRCS+= gost89imit_pmeth.c
-SRCS+= gost_asn1.c
-SRCS+= gost_err.c
-SRCS+= gostr341001.c
-SRCS+= gostr341001_ameth.c
-SRCS+= gostr341001_key.c
-SRCS+= gostr341001_params.c
-SRCS+= gostr341001_pmeth.c
-SRCS+= gostr341194.c
-SRCS+= streebog.c
 
 # hkdf/
 SRCS+= hkdf.c
@@ -431,7 +410,6 @@ SRCS+= hkdf_evp.c
 SRCS+= kdf_err.c
 
 # lhash/
-SRCS+= lh_stats.c
 SRCS+= lhash.c
 
 # md4/
@@ -730,7 +708,6 @@ HDRS=\
 	${LCRYPTO_SRC}/engine/engine.h \
 	${LCRYPTO_SRC}/err/err.h \
 	${LCRYPTO_SRC}/evp/evp.h \
-	${LCRYPTO_SRC}/gost/gost.h \
 	${LCRYPTO_SRC}/hkdf/hkdf.h \
 	${LCRYPTO_SRC}/hmac/hmac.h \
 	${LCRYPTO_SRC}/idea/idea.h \
