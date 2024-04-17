@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip6_output.c,v 1.288 2024/02/28 10:57:20 bluhm Exp $	*/
+/*	$OpenBSD: ip6_output.c,v 1.290 2024/04/16 12:56:39 bluhm Exp $	*/
 /*	$KAME: ip6_output.c,v 1.172 2001/03/25 09:55:56 itojun Exp $	*/
 
 /*
@@ -391,7 +391,7 @@ reroute:
 	/* initialize cached route */
 	if (ro == NULL) {
 		ro = &iproute;
-		bzero((caddr_t)ro, sizeof(*ro));
+		ro->ro_rt = NULL;
 	}
 	ro_pmtu = ro;
 	if (opt && opt->ip6po_rthdr)
@@ -635,6 +635,8 @@ reroute:
 		/* tag as generated to skip over pf_test on rerun */
 		m->m_pkthdr.pf.flags |= PF_TAG_GENERATED;
 		finaldst = ip6->ip6_dst;
+		if (ro == &iproute)
+			rtfree(ro->ro_rt);
 		ro = NULL;
 		if_put(ifp); /* drop reference since destination changed */
 		ifp = NULL;
@@ -758,11 +760,10 @@ reroute:
  bad:
 	m_freem(m);
  done:
-	if (ro == &iproute && ro->ro_rt) {
+	if (ro == &iproute)
 		rtfree(ro->ro_rt);
-	} else if (ro_pmtu == &iproute && ro_pmtu->ro_rt) {
+	else if (ro_pmtu == &iproute)
 		rtfree(ro_pmtu->ro_rt);
-	}
 	if_put(ifp);
 #ifdef IPSEC
 	tdb_unref(tdb);

@@ -1,4 +1,4 @@
-/*	$OpenBSD: vpci.c,v 1.33 2020/10/27 21:01:33 kettenis Exp $	*/
+/*	$OpenBSD: vpci.c,v 1.35 2024/03/29 21:29:33 miod Exp $	*/
 /*
  * Copyright (c) 2008 Mark Kettenis <kettenis@openbsd.org>
  *
@@ -695,7 +695,7 @@ vpci_intr_establish_cpu(bus_space_tag_t t, bus_space_tag_t t0, int ihandle,
 		return (NULL);
 
 	ih->ih_cpu = cpu;
-	intr_establish(ih->ih_pil, ih);
+	intr_establish(ih);
 	ih->ih_ack = vpci_intr_ack;
 
 	err = sun4v_intr_settarget(devhandle, sysino, ih->ih_cpu->ci_upaid);
@@ -769,7 +769,7 @@ vpci_msi_eq_intr(void *arg)
 		if (err != H_EOK)
 			printf("%s: pci_msi_setstate: %d\n", __func__, err);
 
-		send_softint(-1, ih->ih_pil, ih);
+		send_softint(ih->ih_pil, ih);
 
 		head += sizeof(struct vpci_msi_msg);
 		head &= eq->eq_mask;

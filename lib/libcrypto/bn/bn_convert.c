@@ -1,4 +1,4 @@
-/* $OpenBSD: bn_convert.c,v 1.15 2023/07/09 18:37:58 tb Exp $ */
+/* $OpenBSD: bn_convert.c,v 1.20 2024/04/17 14:47:17 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -153,46 +153,74 @@ BN_bn2binpad(const BIGNUM *a, unsigned char *to, int tolen)
 }
 LCRYPTO_ALIAS(BN_bn2binpad);
 
-BIGNUM *
-BN_bin2bn(const unsigned char *s, int len, BIGNUM *ret)
+static int
+bn_bin2bn_cbs(BIGNUM **bnp, CBS *cbs, int lebin)
 {
-	unsigned int i, m;
-	unsigned int n;
-	BN_ULONG l;
 	BIGNUM *bn = NULL;
+	BN_ULONG w;
+	uint8_t v;
+	int b, i;
 
-	if (len < 0)
-		return (NULL);
-	if (ret == NULL)
-		ret = bn = BN_new();
-	if (ret == NULL)
-		return (NULL);
-	l = 0;
-	n = len;
-	if (n == 0) {
-		ret->top = 0;
-		return (ret);
-	}
-	i = ((n - 1) / BN_BYTES) + 1;
-	m = ((n - 1) % (BN_BYTES));
-	if (!bn_wexpand(ret, (int)i)) {
-		BN_free(bn);
-		return NULL;
-	}
-	ret->top = i;
-	ret->neg = 0;
-	while (n--) {
-		l = (l << 8L) | *(s++);
-		if (m-- == 0) {
-			ret->d[--i] = l;
-			l = 0;
-			m = BN_BYTES - 1;
+	if ((bn = *bnp) == NULL)
+		bn = BN_new();
+	if (bn == NULL)
+		goto err;
+	if (!bn_expand_bytes(bn, CBS_len(cbs)))
+		goto err;
+
+	b = 0;
+	i = 0;
+	w = 0;
+
+	while (CBS_len(cbs) > 0) {
+		if (lebin) {
+			if (!CBS_get_u8(cbs, &v))
+				goto err;
+		} else {
+			if (!CBS_get_last_u8(cbs, &v))
+				goto err;
+		}
+
+		w |= (BN_ULONG)v << b;
+		b += 8;
+
+		if (b == BN_BITS2 || CBS_len(cbs) == 0) {
+			b = 0;
+			bn->d[i++] = w;
+			w = 0;
 		}
 	}
-	/* need to call this due to clear byte at top if avoiding
-	 * having the top bit set (-ve number) */
-	bn_correct_top(ret);
-	return (ret);
+
+	bn->neg = 0;
+	bn->top = i;
+
+	bn_correct_top(bn);
+
+	*bnp = bn;
+
+	return 1;
+
+ err:
+	if (*bnp == NULL)
+		BN_free(bn);
+
+	return 0;
+}
+
+BIGNUM *
+BN_bin2bn(const unsigned char *d, int len, BIGNUM *bn)
+{
+	CBS cbs;
+
+	if (len < 0)
+		return NULL;
+
+	CBS_init(&cbs, d, len);
+
+	if (!bn_bin2bn_cbs(&bn, &cbs, 0))
+		return NULL;
+
+	return bn;
 }
 LCRYPTO_ALIAS(BN_bin2bn);
 
@@ -207,56 +235,19 @@ BN_bn2lebinpad(const BIGNUM *a, unsigned char *to, int tolen)
 LCRYPTO_ALIAS(BN_bn2lebinpad);
 
 BIGNUM *
-BN_lebin2bn(const unsigned char *s, int len, BIGNUM *ret)
+BN_lebin2bn(const unsigned char *d, int len, BIGNUM *bn)
 {
-	unsigned int i, m, n;
-	BN_ULONG l;
-	BIGNUM *bn = NULL;
+	CBS cbs;
 
-	if (ret == NULL)
-		ret = bn = BN_new();
-	if (ret == NULL)
+	if (len < 0)
 		return NULL;
 
+	CBS_init(&cbs, d, len);
 
-	s += len;
-	/* Skip trailing zeroes. */
-	for (; len > 0 && s[-1] == 0; s--, len--)
-		continue;
-
-	n = len;
-	if (n == 0) {
-		ret->top = 0;
-		return ret;
-	}
-
-	i = ((n - 1) / BN_BYTES) + 1;
-	m = (n - 1) % BN_BYTES;
-	if (!bn_wexpand(ret, (int)i)) {
-		BN_free(bn);
+	if (!bn_bin2bn_cbs(&bn, &cbs, 1))
 		return NULL;
-	}
 
-	ret->top = i;
-	ret->neg = 0;
-	l = 0;
-	while (n-- > 0) {
-		s--;
-		l = (l << 8L) | *s;
-		if (m-- == 0) {
-			ret->d[--i] = l;
-			l = 0;
-			m = BN_BYTES - 1;
-		}
-	}
-
-	/*
-	 * need to call this due to clear byte at top if avoiding having the
-	 * top bit set (-ve number)
-	 */
-	bn_correct_top(ret);
-
-	return ret;
+	return bn;
 }
 LCRYPTO_ALIAS(BN_lebin2bn);
 
@@ -431,7 +422,7 @@ bn_dec2bn_cbs(BIGNUM **bnp, CBS *cbs)
 		bn = BN_new();
 	if (bn == NULL)
 		goto err;
-	if (!bn_expand(bn, digits * 4))
+	if (!bn_expand_bits(bn, digits * 4))
 		goto err;
 
 	if ((d = digits % BN_DEC_NUM) == 0)
@@ -628,13 +619,13 @@ bn_hex2bn_cbs(BIGNUM **bnp, CBS *cbs)
 		bn = BN_new();
 	if (bn == NULL)
 		goto err;
-	if (!bn_expand(bn, digits * 4))
+	if (!bn_expand_bits(bn, digits * 4))
 		goto err;
 
 	if (!CBS_get_bytes(cbs, cbs, digits))
 		goto err;
 
-	b = BN_BITS2;
+	b = 0;
 	i = 0;
 	w = 0;
 
@@ -652,11 +643,11 @@ bn_hex2bn_cbs(BIGNUM **bnp, CBS *cbs)
 		else
 			goto err;
 
-		w |= (BN_ULONG)v << (BN_BITS2 - b);
-		b -= 4;
+		w |= (BN_ULONG)v << b;
+		b += 4;
 
-		if (b == 0 || digits == 0) {
-			b = BN_BITS2;
+		if (b == BN_BITS2 || digits == 0) {
+			b = 0;
 			bn->d[i++] = w;
 			w = 0;
 		}
@@ -729,45 +720,42 @@ BN_bn2mpi(const BIGNUM *a, unsigned char *d)
 LCRYPTO_ALIAS(BN_bn2mpi);
 
 BIGNUM *
-BN_mpi2bn(const unsigned char *d, int n, BIGNUM *ain)
+BN_mpi2bn(const unsigned char *d, int n, BIGNUM *bn_in)
 {
-	BIGNUM *a = ain;
-	long len;
+	BIGNUM *bn = bn_in;
+	uint32_t mpi_len;
+	uint8_t v;
 	int neg = 0;
+	CBS cbs;
 
-	if (n < 4) {
+	if (n < 0)
+		return NULL;
+
+	CBS_init(&cbs, d, n);
+
+	if (!CBS_get_u32(&cbs, &mpi_len)) {
 		BNerror(BN_R_INVALID_LENGTH);
-		return (NULL);
+		return NULL;
+
 	}
-	len = ((long)d[0] << 24) | ((long)d[1] << 16) | ((int)d[2] << 8) |
-	    (int)d[3];
-	if ((len + 4) != n) {
+	if (CBS_len(&cbs) != mpi_len) {
 		BNerror(BN_R_ENCODING_ERROR);
-		return (NULL);
+		return NULL;
+	}
+	if (CBS_len(&cbs) > 0) {
+		if (!CBS_peek_u8(&cbs, &v))
+			return NULL;
+		neg = (v >> 7) & 1;
 	}
 
-	if (a == NULL)
-		a = BN_new();
-	if (a == NULL)
-		return (NULL);
+	if (!bn_bin2bn_cbs(&bn, &cbs, 0))
+		return NULL;
 
-	if (len == 0) {
-		a->neg = 0;
-		a->top = 0;
-		return (a);
-	}
-	d += 4;
-	if ((*d) & 0x80)
-		neg = 1;
-	if (BN_bin2bn(d, (int)len, a) == NULL) {
-		if (ain == NULL)
-			BN_free(a);
-		return (NULL);
-	}
-	BN_set_negative(a, neg);
-	if (neg) {
-		BN_clear_bit(a, BN_num_bits(a) - 1);
-	}
-	return (a);
+	if (neg)
+		BN_clear_bit(bn, BN_num_bits(bn) - 1);
+
+	BN_set_negative(bn, neg);
+
+	return bn;
 }
 LCRYPTO_ALIAS(BN_mpi2bn);

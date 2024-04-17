@@ -1,4 +1,4 @@
-.\" $OpenBSD: tmux.1,v 1.936 2024/02/13 08:10:23 nicm Exp $
+.\" $OpenBSD: tmux.1,v 1.941 2024/04/10 07:36:25 nicm Exp $
 .\"
 .\" Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
 .\"
@@ -14,7 +14,7 @@
 .\" IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING
 .\" OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: February 13 2024 $
+.Dd $Mdocdate: April 10 2024 $
 .Dt TMUX 1
 .Os
 .Sh NAME
@@ -1036,9 +1036,17 @@ The following commands are available to manage clients and sessions:
 .D1 Pq alias: Ic attach
 If run from outside
 .Nm ,
-create a new client in the current terminal and attach it to
+attach to
+.Ar target-session
+in the current terminal.
+.Ar target-session
+must already exist - to create a new session, see the
+.Ic new-session
+command (with
+.Fl A
+to create or attach).
+If used from inside, switch the currently attached session to
 .Ar target-session .
-If used from inside, switch the current client.
 If
 .Fl d
 is specified, any other clients attached to the session are detached.
@@ -3737,7 +3745,6 @@ Set the time in milliseconds for which
 .Nm
 waits after an escape is input to determine if it is part of a function or meta
 key sequences.
-The default is 500 milliseconds.
 .It Ic editor Ar shell-command
 Set the command used when
 .Nm
@@ -4742,6 +4749,12 @@ they will be allowed even if the pane is invisible.
 .Xc
 Allow programs in the pane to change the window name using a terminal escape
 sequence (\eek...\ee\e\e).
+.Pp
+.It Xo Ic allow-set-title
+.Op Ic on | off
+.Xc
+Allow programs in the pane to change the title using the terminal escape
+sequences (\ee]2;...\ee\e\e or \ee]0;...\ee\e\e).
 .Pp
 .It Xo Ic alternate-screen
 .Op Ic on | off
@@ -6108,7 +6121,7 @@ the default is
 .Ql y .
 .Tg menu
 .It Xo Ic display-menu
-.Op Fl O
+.Op Fl OM
 .Op Fl b Ar border-lines
 .Op Fl c Ar target-client
 .Op Fl C Ar starting-choice
@@ -6215,7 +6228,13 @@ changes this behaviour so that the menu does not close when the mouse button is
 released without an item selected the menu is not closed and a mouse button
 must be clicked to choose an item.
 .Pp
-The following keys are also available:
+.Fl M
+tells
+.Nm
+the menu should handle mouse events; by default only menus opened from mouse
+key bindings do so.
+.Pp
+The following keys are available in menus:
 .Bl -column "Key" "Function" -offset indent
 .It Sy "Key" Ta Sy "Function"
 .It Li "Enter" Ta "Choose selected item"
@@ -6461,7 +6480,7 @@ is replaced by the buffer name in
 and the result executed as a command.
 If
 .Ar template
-is not given, "paste-buffer -b \[aq]%%\[aq]" is used.
+is not given, "paste-buffer -p -b \[aq]%%\[aq]" is used.
 .Pp
 .Fl O
 specifies the initial sort field: one of

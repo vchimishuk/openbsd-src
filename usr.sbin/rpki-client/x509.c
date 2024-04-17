@@ -1,4 +1,4 @@
-/*	$OpenBSD: x509.c,v 1.81 2024/02/22 12:49:42 job Exp $ */
+/*	$OpenBSD: x509.c,v 1.86 2024/04/03 04:20:13 tb Exp $ */
 /*
  * Copyright (c) 2022 Theo Buehler <tb@openbsd.org>
  * Copyright (c) 2021 Claudio Jeker <claudio@openbsd.org>
@@ -535,8 +535,24 @@ x509_get_sia(X509 *x, const char *fn, char **sia)
 		if (rsync_found)
 			continue;
 
-		if (strncasecmp(*sia, "rsync://", 8) == 0) {
+		if (strncasecmp(*sia, RSYNC_PROTO, RSYNC_PROTO_LEN) == 0) {
+			const char *p = *sia + RSYNC_PROTO_LEN;
+			size_t fnlen, plen;
+
 			rsync_found = 1;
+
+			if (filemode)
+				continue;
+
+			fnlen = strlen(fn);
+			plen = strlen(p);
+
+			if (fnlen < plen || strcmp(p, fn + fnlen - plen) != 0) {
+				warnx("%s: mismatch between pathname and SIA "
+				    "(%s)", fn, *sia);
+				goto out;
+			}
+
 			continue;
 		}
 
@@ -742,9 +758,10 @@ x509_get_crl(X509 *x, const char *fn, char **crl)
 		    " disallowed", fn);
 		goto out;
 	}
+	/* Need to hardcode the alternative 0 due to missing macros or enum. */
 	if (dp->distpoint->type != 0) {
-		warnx("%s: RFC 6487 section 4.8.6: CRL: "
-		    "expected GEN_OTHERNAME, have %d", fn, dp->distpoint->type);
+		warnx("%s: RFC 6487 section 4.8.6: CRL DistributionPointName:"
+		    " expected fullName, have %d", fn, dp->distpoint->type);
 		goto out;
 	}
 
@@ -757,7 +774,7 @@ x509_get_crl(X509 *x, const char *fn, char **crl)
 		    crl))
 			goto out;
 
-		if (strncasecmp(*crl, "rsync://", 8) == 0) {
+		if (strncasecmp(*crl, RSYNC_PROTO, RSYNC_PROTO_LEN) == 0) {
 			rsync_found = 1;
 			goto out;
 		}
@@ -1008,6 +1025,12 @@ x509_convert_seqnum(const char *fn, const ASN1_INTEGER *i)
 	if (i == NULL)
 		goto out;
 
+	if (ASN1_STRING_length(i) > 20) {
+		warnx("%s: %s: want 20 octets or fewer, have more.",
+		    __func__, fn);
+		goto out;
+	}
+
 	seqnum = ASN1_INTEGER_to_BN(i, NULL);
 	if (seqnum == NULL) {
 		warnx("%s: ASN1_INTEGER_to_BN error", fn);
@@ -1016,12 +1039,6 @@ x509_convert_seqnum(const char *fn, const ASN1_INTEGER *i)
 
 	if (BN_is_negative(seqnum)) {
 		warnx("%s: %s: want positive integer, have negative.",
-		    __func__, fn);
-		goto out;
-	}
-
-	if (BN_num_bytes(seqnum) > 20) {
-		warnx("%s: %s: want 20 octets or fewer, have more.",
 		    __func__, fn);
 		goto out;
 	}
@@ -1046,7 +1063,7 @@ x509_find_expires(time_t notafter, struct auth *a, struct crl_tree *crlt)
 
 	expires = notafter;
 
-	for (; a != NULL; a = a->parent) {
+	for (; a != NULL; a = a->issuer) {
 		if (expires > a->cert->notafter)
 			expires = a->cert->notafter;
 		crl = crl_get(crlt, a);

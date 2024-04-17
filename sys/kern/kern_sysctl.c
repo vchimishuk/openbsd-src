@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_sysctl.c,v 1.425 2024/02/10 15:28:16 deraadt Exp $	*/
+/*	$OpenBSD: kern_sysctl.c,v 1.427 2024/04/12 16:07:09 bluhm Exp $	*/
 /*	$NetBSD: kern_sysctl.c,v 1.17 1996/05/20 17:49:05 mrg Exp $	*/
 
 /*-
@@ -670,13 +670,12 @@ int hw_power = 1;
 
 /* morally const values reported by sysctl_bounded_arr */
 static int byte_order = BYTE_ORDER;
-static int page_size = PAGE_SIZE;
 
 const struct sysctl_bounded_args hw_vars[] = {
 	{HW_NCPU, &ncpus, SYSCTL_INT_READONLY},
 	{HW_NCPUFOUND, &ncpusfound, SYSCTL_INT_READONLY},
 	{HW_BYTEORDER, &byte_order, SYSCTL_INT_READONLY},
-	{HW_PAGESIZE, &page_size, SYSCTL_INT_READONLY},
+	{HW_PAGESIZE, &uvmexp.pagesize, SYSCTL_INT_READONLY},
 	{HW_DISKCOUNT, &disk_count, SYSCTL_INT_READONLY},
 	{HW_POWER, &hw_power, SYSCTL_INT_READONLY},
 };
@@ -1506,6 +1505,12 @@ sysctl_file(int *name, u_int namelen, char *where, size_t *sizep,
 			TAILQ_FOREACH(inp, &tcbtable.inpt_queue, inp_queue)
 				FILLSO(inp->inp_socket);
 			mtx_leave(&tcbtable.inpt_mtx);
+#ifdef INET6
+			mtx_enter(&tcb6table.inpt_mtx);
+			TAILQ_FOREACH(inp, &tcb6table.inpt_queue, inp_queue)
+				FILLSO(inp->inp_socket);
+			mtx_leave(&tcb6table.inpt_mtx);
+#endif
 			mtx_enter(&udbtable.inpt_mtx);
 			TAILQ_FOREACH(inp, &udbtable.inpt_queue, inp_queue)
 				FILLSO(inp->inp_socket);

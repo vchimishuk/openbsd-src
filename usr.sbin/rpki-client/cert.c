@@ -1,4 +1,4 @@
-/*	$OpenBSD: cert.c,v 1.127 2024/02/16 14:48:47 tb Exp $ */
+/*	$OpenBSD: cert.c,v 1.129 2024/03/22 03:38:12 job Exp $ */
 /*
  * Copyright (c) 2022 Theo Buehler <tb@openbsd.org>
  * Copyright (c) 2021 Job Snijders <job@openbsd.org>
@@ -524,15 +524,15 @@ sbgp_sia(const char *fn, struct cert *cert, X509_EXTENSION *ext)
 
 		if (OBJ_cmp(oid, carepo_oid) == 0) {
 			if (!x509_location(fn, "SIA: caRepository",
-			    "rsync://", ad->location, &cert->repo))
+			    RSYNC_PROTO, ad->location, &cert->repo))
 				goto out;
 		} else if (OBJ_cmp(oid, manifest_oid) == 0) {
 			if (!x509_location(fn, "SIA: rpkiManifest",
-			    "rsync://", ad->location, &cert->mft))
+			    RSYNC_PROTO, ad->location, &cert->mft))
 				goto out;
 		} else if (OBJ_cmp(oid, notify_oid) == 0) {
 			if (!x509_location(fn, "SIA: rpkiNotify",
-			    "https://", ad->location, &cert->notify))
+			    HTTPS_PROTO, ad->location, &cert->notify))
 				goto out;
 		}
 	}
@@ -1198,7 +1198,7 @@ auth_find(struct auth_tree *auths, const char *aki)
 }
 
 struct auth *
-auth_insert(struct auth_tree *auths, struct cert *cert, struct auth *parent)
+auth_insert(struct auth_tree *auths, struct cert *cert, struct auth *issuer)
 {
 	struct auth *na;
 
@@ -1206,7 +1206,7 @@ auth_insert(struct auth_tree *auths, struct cert *cert, struct auth *parent)
 	if (na == NULL)
 		err(1, NULL);
 
-	na->parent = parent;
+	na->issuer = issuer;
 	na->cert = cert;
 	na->any_inherits = x509_any_inherits(cert->x509);
 

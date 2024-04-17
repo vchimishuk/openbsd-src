@@ -1,4 +1,4 @@
-/*	$OpenBSD: ieee80211_input.c,v 1.250 2023/01/09 00:22:47 daniel Exp $	*/
+/*	$OpenBSD: ieee80211_input.c,v 1.252 2024/04/13 23:44:11 jsg Exp $	*/
 /*	$NetBSD: ieee80211_input.c,v 1.24 2004/05/31 11:12:24 dyoung Exp $	*/
 
 /*-
@@ -1901,7 +1901,7 @@ ieee80211_recv_probe_resp(struct ieee80211com *ic, struct mbuf *m,
 		 * This probe response indicates the AP is still serving us
 		 * so don't allow ieee80211_watchdog() to move us into SCAN.
 		 */
-		 if ((ic->ic_flags & IEEE80211_F_BGSCAN) == 0)
+		if ((ic->ic_flags & IEEE80211_F_BGSCAN) == 0)
 		 	ic->ic_mgt_timer = 0;
 	}
 	/*
@@ -2837,6 +2837,11 @@ ieee80211_recv_addba_req(struct ieee80211com *ic, struct mbuf *m,
 	u_int16_t params, ssn, bufsz, timeout;
 	u_int8_t token, tid;
 	int err = 0;
+
+	/* Ignore if we are not ready to receive data frames. */
+	if (ic->ic_state != IEEE80211_S_RUN ||
+	    ((ic->ic_flags & IEEE80211_F_RSNON) && !ni->ni_port_valid))
+		return;
 
 	if (!(ni->ni_flags & IEEE80211_NODE_HT)) {
 		DPRINTF(("received ADDBA req from non-HT STA %s\n",

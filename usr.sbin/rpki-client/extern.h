@@ -1,4 +1,4 @@
-/*	$OpenBSD: extern.h,v 1.210 2024/02/26 15:40:33 job Exp $ */
+/*	$OpenBSD: extern.h,v 1.216 2024/04/15 13:57:45 job Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -24,17 +24,9 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 
-/*
- * Enumeration for ASN.1 explicit tags in RSC eContent
- */
-enum rsc_resourceblock_tag {
-	RSRCBLK_TYPE_ASID,
-	RSRCBLK_TYPE_IPADDRBLK,
-};
-
 enum cert_as_type {
 	CERT_AS_ID, /* single identifier */
-	CERT_AS_INHERIT, /* inherit from parent */
+	CERT_AS_INHERIT, /* inherit from issuer */
 	CERT_AS_RANGE, /* range of identifiers */
 };
 
@@ -384,7 +376,7 @@ struct gbr {
  * A single ASPA record
  */
 struct aspa {
-	int			 valid; /* contained in parent auth */
+	int			 valid; /* contained in issuer auth */
 	int			 talid; /* TAL the ASPA is chained up to */
 	char			*aia; /* AIA */
 	char			*aki; /* AKI */
@@ -411,6 +403,7 @@ struct vap {
 	time_t			 expires;
 	int			 talid;
 	unsigned int		 repoid;
+	int			 overflowed;
 };
 
 /*
@@ -481,6 +474,7 @@ RB_PROTOTYPE(brk_tree, brk, entry, brkcmp);
 struct crl {
 	RB_ENTRY(crl)	 entry;
 	char		*aki;
+	char		*mftpath;
 	char		*number;
 	X509_CRL	*x509_crl;
 	time_t		 thisupdate;	/* do not use before */
@@ -499,7 +493,7 @@ RB_HEAD(crl_tree, crl);
 struct auth {
 	RB_ENTRY(auth)	 entry;
 	struct cert	*cert; /* owner information */
-	struct auth	*parent; /* pointer to parent or NULL for TA cert */
+	struct auth	*issuer; /* pointer to issuer or NULL for TA cert */
 	int		 any_inherits;
 };
 /*
@@ -580,6 +574,7 @@ enum stype {
 	STYPE_UNIQUE,
 	STYPE_DEC_UNIQUE,
 	STYPE_PROVIDERS,
+	STYPE_OVERFLOW,
 };
 
 struct repo;
@@ -608,6 +603,7 @@ struct repotalstats {
 	uint32_t	 vaps; /* total number of Validated ASPA Payloads */
 	uint32_t	 vaps_uniqs; /* total number of unique VAPs */
 	uint32_t	 vaps_pas; /* total number of providers */
+	uint32_t	 vaps_overflowed; /* VAPs with too many providers */
 	uint32_t	 vrps; /* total number of Validated ROA Payloads */
 	uint32_t	 vrps_uniqs; /* number of unique vrps */
 	uint32_t	 spls; /* signed prefix list */
@@ -718,7 +714,7 @@ struct tak	*tak_parse(X509 **, const char *, int, const unsigned char *,
 
 void		 aspa_buffer(struct ibuf *, const struct aspa *);
 void		 aspa_free(struct aspa *);
-void		 aspa_insert_vaps(struct vap_tree *, struct aspa *,
+void		 aspa_insert_vaps(char *, struct vap_tree *, struct aspa *,
 		    struct repo *);
 struct aspa	*aspa_parse(X509 **, const char *, int, const unsigned char *,
 		    size_t);
@@ -1022,5 +1018,12 @@ int	mkpathat(int, const char *);
 
 /* Maximum number of delegated hosting locations (repositories) for each TAL. */
 #define MAX_REPO_PER_TAL	1000
+
+#define HTTP_PROTO		"http://"
+#define HTTP_PROTO_LEN		(sizeof(HTTP_PROTO) - 1)
+#define HTTPS_PROTO		"https://"
+#define HTTPS_PROTO_LEN		(sizeof(HTTPS_PROTO) - 1)
+#define RSYNC_PROTO		"rsync://"
+#define RSYNC_PROTO_LEN		(sizeof(RSYNC_PROTO) - 1)
 
 #endif /* ! EXTERN_H */

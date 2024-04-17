@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.h,v 1.163 2024/02/25 19:15:50 cheloha Exp $	*/
+/*	$OpenBSD: cpu.h,v 1.166 2024/04/17 13:12:58 mpi Exp $	*/
 /*	$NetBSD: cpu.h,v 1.1 2003/04/26 18:39:39 fvdl Exp $	*/
 
 /*-
@@ -53,6 +53,7 @@
 #include <sys/sched.h>
 #include <sys/sensors.h>
 #include <sys/srp.h>
+#include <uvm/uvm_percpu.h>
 
 #ifdef _KERNEL
 
@@ -91,6 +92,13 @@ union vmm_cpu_cap {
 	struct svm vcc_svm;
 };
 
+enum cpu_vendor {
+    CPUV_UNKNOWN,
+    CPUV_AMD,
+    CPUV_INTEL,
+    CPUV_VIA,
+};
+
 /*
  *  Locks used to protect struct members in this file:
  *	I	immutable after creation
@@ -125,7 +133,7 @@ struct cpu_info {
 	u_int64_t ci_user_cr3;		/* [o] U-K page table */
 
 	/* bits for mitigating Micro-architectural Data Sampling */
-	char		ci_mds_tmp[32];	/* [o] 32byte aligned */
+	char		ci_mds_tmp[64];	/* [o] 64-byte aligned */
 	void		*ci_mds_buf;	/* [I] */
 
 	struct proc *ci_curproc;	/* [o] */
@@ -154,6 +162,8 @@ struct cpu_info {
 	volatile u_int	ci_flags;	/* [a] */
 	u_int32_t	ci_ipis;	/* [a] */
 
+	enum cpu_vendor	ci_vendor;		/* [I] mapped from cpuid(0) */
+	u_int32_t       ci_cpuid_level;         /* [I] cpuid(0).eax */
 	u_int32_t	ci_feature_flags;	/* [I] */
 	u_int32_t	ci_feature_eflags;	/* [I] */
 	u_int32_t	ci_feature_sefflags_ebx;/* [I] */
@@ -201,6 +211,8 @@ struct cpu_info {
 
 #ifdef MULTIPROCESSOR
 	struct srp_hazard	ci_srp_hazards[SRP_HAZARD_NUM];
+#define __HAVE_UVM_PERCPU
+	struct uvm_pmr_cache	ci_uvm;		/* [o] page cache */
 #endif
 
 	struct ksensordev	ci_sensordev;
@@ -403,6 +415,7 @@ extern int cpuspeed;
 
 /* machdep.c */
 void	dumpconf(void);
+void	cpu_set_vendor(struct cpu_info *, int _level, const char *_vendor);
 void	cpu_reset(void);
 void	x86_64_proc0_tss_ldt_init(void);
 void	cpu_proc_fork(struct proc *, struct proc *);

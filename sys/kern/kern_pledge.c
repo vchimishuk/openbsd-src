@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_pledge.c,v 1.310 2023/12/12 17:43:10 deraadt Exp $	*/
+/*	$OpenBSD: kern_pledge.c,v 1.313 2024/04/05 13:55:26 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2015 Nicholas Marriott <nicm@openbsd.org>
@@ -105,14 +105,12 @@ const uint64_t pledge_syscalls[SYS_MAXSYSCALL] = {
 	 */
 	[SYS_exit] = PLEDGE_ALWAYS,
 	[SYS_kbind] = PLEDGE_ALWAYS,
-	[SYS_msyscall] = PLEDGE_ALWAYS,
 	[SYS___get_tcb] = PLEDGE_ALWAYS,
 	[SYS___set_tcb] = PLEDGE_ALWAYS,
 	[SYS_pledge] = PLEDGE_ALWAYS,
 	[SYS_sendsyslog] = PLEDGE_ALWAYS,	/* stack protector reporting */
 	[SYS_thrkill] = PLEDGE_ALWAYS,		/* raise, abort, stack pro */
 	[SYS_utrace] = PLEDGE_ALWAYS,		/* ltrace(1) from ld.so */
-	[SYS_pinsyscall] = PLEDGE_ALWAYS,
 	[SYS_pinsyscalls] = PLEDGE_ALWAYS,
 
 	/* "getting" information about self is considered safe */
@@ -1139,6 +1137,7 @@ pledge_ioctl(struct proc *p, long com, struct file *fp)
 #if NAUDIO > 0
 	if ((pledge & PLEDGE_AUDIO)) {
 		switch (com) {
+		case AUDIO_GETDEV:
 		case AUDIO_GETPOS:
 		case AUDIO_GETPAR:
 		case AUDIO_SETPAR:

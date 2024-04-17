@@ -1,4 +1,4 @@
-/*	$OpenBSD: uvm_amap.c,v 1.92 2023/04/11 00:45:09 jsg Exp $	*/
+/*	$OpenBSD: uvm_amap.c,v 1.94 2024/04/17 13:17:31 mpi Exp $	*/
 /*	$NetBSD: uvm_amap.c,v 1.27 2000/11/25 06:27:59 chs Exp $	*/
 
 /*
@@ -482,7 +482,6 @@ amap_wipeout(struct vm_amap *amap)
 	int slot;
 	struct vm_anon *anon;
 	struct vm_amap_chunk *chunk;
-	struct pglist pgl;
 
 	KASSERT(rw_write_held(amap->am_lock));
 	KASSERT(amap->am_ref == 0);
@@ -495,7 +494,6 @@ amap_wipeout(struct vm_amap *amap)
 		return;
 	}
 
-	TAILQ_INIT(&pgl);
 	amap_list_remove(amap);
 
 	AMAP_CHUNK_FOREACH(chunk, amap) {
@@ -515,12 +513,10 @@ amap_wipeout(struct vm_amap *amap)
 			 */
 			refs = --anon->an_ref;
 			if (refs == 0) {
-				uvm_anfree_list(anon, &pgl);
+				uvm_anfree(anon);
 			}
 		}
 	}
-	/* free the pages */
-	uvm_pglistfree(&pgl);
 
 	/*
 	 * Finally, destroy the amap.
@@ -662,9 +658,10 @@ amap_copy(struct vm_map *map, struct vm_map_entry *entry, int waitf,
 
 		chunk = amap_chunk_get(amap, lcv, 1, PR_NOWAIT);
 		if (chunk == NULL) {
-			/* amap_wipeout() releases the lock. */
-			amap->am_ref = 0;
-			amap_wipeout(amap);
+			amap_unlock(srcamap);
+			/* Destroy the new amap. */
+			amap->am_ref--;
+			amap_free(amap);
 			return;
 		}
 

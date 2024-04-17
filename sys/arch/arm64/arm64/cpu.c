@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.c,v 1.108 2024/03/05 18:42:20 kettenis Exp $	*/
+/*	$OpenBSD: cpu.c,v 1.114 2024/04/13 14:19:39 kettenis Exp $	*/
 
 /*
  * Copyright (c) 2016 Dale Rahn <drahn@dalerahn.com>
@@ -52,6 +52,7 @@
 #define CPU_IMPL_AMCC		0x50
 #define CPU_IMPL_QCOM		0x51
 #define CPU_IMPL_APPLE		0x61
+#define CPU_IMPL_AMPERE		0xc0
 
 /* ARM */
 #define CPU_PART_CORTEX_A34	0xd02
@@ -86,6 +87,8 @@
 #define CPU_PART_CORTEX_A720	0xd81
 #define CPU_PART_CORTEX_X4	0xd82
 #define CPU_PART_NEOVERSE_V3	0xd84
+#define CPU_PART_CORTEX_A520AE	0xd88
+#define CPU_PART_CORTEX_A720AE	0xd89
 #define CPU_PART_NEOVERSE_N3	0xd8e
 
 /* Cavium */
@@ -114,6 +117,9 @@
 #define CPU_PART_AVALANCHE_PRO	0x035
 #define CPU_PART_BLIZZARD_MAX	0x038
 #define CPU_PART_AVALANCHE_MAX	0x039
+
+/* Ampere */
+#define CPU_PART_AMPERE1	0xac3
 
 #define CPU_IMPL(midr)  (((midr) >> 24) & 0xff)
 #define CPU_PART(midr)  (((midr) >> 4) & 0xfff)
@@ -148,9 +154,11 @@ struct cpu_cores cpu_cores_arm[] = {
 	{ CPU_PART_CORTEX_A78C, "Cortex-A78C" },
 	{ CPU_PART_CORTEX_A510, "Cortex-A510" },
 	{ CPU_PART_CORTEX_A520, "Cortex-A520" },
+	{ CPU_PART_CORTEX_A520AE, "Cortex-A520AE" },
 	{ CPU_PART_CORTEX_A710, "Cortex-A710" },
 	{ CPU_PART_CORTEX_A715, "Cortex-A715" },
 	{ CPU_PART_CORTEX_A720, "Cortex-A720" },
+	{ CPU_PART_CORTEX_A720AE, "Cortex-A720AE" },
 	{ CPU_PART_CORTEX_X1, "Cortex-X1" },
 	{ CPU_PART_CORTEX_X1C, "Cortex-X1C" },
 	{ CPU_PART_CORTEX_X2, "Cortex-X2" },
@@ -201,6 +209,11 @@ struct cpu_cores cpu_cores_apple[] = {
 	{ 0, NULL },
 };
 
+struct cpu_cores cpu_cores_ampere[] = {
+	{ CPU_PART_AMPERE1, "AmpereOne" },
+	{ 0, NULL },
+};
+
 /* arm cores makers */
 const struct implementers {
 	int			id;
@@ -212,6 +225,7 @@ const struct implementers {
 	{ CPU_IMPL_AMCC, "Applied Micro", cpu_cores_amcc },
 	{ CPU_IMPL_QCOM, "Qualcomm", cpu_cores_qcom },
 	{ CPU_IMPL_APPLE, "Apple", cpu_cores_apple },
+	{ CPU_IMPL_AMPERE, "Ampere", cpu_cores_ampere },
 	{ 0, NULL },
 };
 
@@ -230,6 +244,7 @@ int arm64_has_aes;
 
 extern char trampoline_vectors_none[];
 extern char trampoline_vectors_loop_8[];
+extern char trampoline_vectors_loop_11[];
 extern char trampoline_vectors_loop_24[];
 extern char trampoline_vectors_loop_32[];
 #if NPSCI > 0
@@ -263,6 +278,175 @@ void	cpu_kstat_attach(struct cpu_info *ci);
 void	cpu_opp_kstat_attach(struct cpu_info *ci);
 #endif
 
+/*
+ * Enable mitigation for Spectre-V2 branch target injection
+ * vulnerabilities (CVE-2017-5715).
+ */
+void
+cpu_mitigate_spectre_v2(struct cpu_info *ci)
+{
+	uint64_t id;
+
+	/*
+	 * By default we let the firmware decide what mitigation is
+	 * necessary.
+	 */
+	ci->ci_flush_bp = cpu_flush_bp_psci;
+
+	/* Some specific CPUs are known not to be vulnerable. */
+	switch (CPU_IMPL(ci->ci_midr)) {
+	case CPU_IMPL_ARM:
+		switch (CPU_PART(ci->ci_midr)) {
+		case CPU_PART_CORTEX_A35:
+		case CPU_PART_CORTEX_A53:
+		case CPU_PART_CORTEX_A55:
+			/* Not vulnerable. */
+			ci->ci_flush_bp = cpu_flush_bp_noop;
+			break;
+		}
+		break;
+	case CPU_IMPL_QCOM:
+		switch (CPU_PART(ci->ci_midr)) {
+		case CPU_PART_KRYO400_SILVER:
+			/* Not vulnerable. */
+			ci->ci_flush_bp = cpu_flush_bp_noop;
+			break;
+		}
+	}
+
+	/*
+	 * The architecture has been updated to explicitly tell us if
+	 * we're not vulnerable to Spectre-V2.
+	 */
+	id = READ_SPECIALREG(id_aa64pfr0_el1);
+	if (ID_AA64PFR0_CSV2(id) >= ID_AA64PFR0_CSV2_IMPL)
+		ci->ci_flush_bp = cpu_flush_bp_noop;
+}
+
+/*
+ * Enable mitigation for Spectre-BHB branch history injection
+ * vulnerabilities (CVE-2022-23960).
+*/
+void
+cpu_mitigate_spectre_bhb(struct cpu_info *ci)
+{
+	uint64_t id;
+
+	/*
+	 * If we know the CPU, we can add a branchy loop that cleans
+	 * the BHB.
+	 */
+	switch (CPU_IMPL(ci->ci_midr)) {
+	case CPU_IMPL_ARM:
+		switch (CPU_PART(ci->ci_midr)) {
+		case CPU_PART_CORTEX_A57:
+		case CPU_PART_CORTEX_A72:
+			ci->ci_trampoline_vectors =
+			    (vaddr_t)trampoline_vectors_loop_8;
+			break;
+		case CPU_PART_CORTEX_A76:
+		case CPU_PART_CORTEX_A76AE:
+		case CPU_PART_CORTEX_A77:
+		case CPU_PART_NEOVERSE_N1:
+			ci->ci_trampoline_vectors =
+			    (vaddr_t)trampoline_vectors_loop_24;
+			break;
+		case CPU_PART_CORTEX_A78:
+		case CPU_PART_CORTEX_A78AE:
+		case CPU_PART_CORTEX_A78C:
+		case CPU_PART_CORTEX_X1:
+		case CPU_PART_CORTEX_X2:
+		case CPU_PART_CORTEX_A710:
+		case CPU_PART_NEOVERSE_N2:
+		case CPU_PART_NEOVERSE_V1:
+			ci->ci_trampoline_vectors =
+			    (vaddr_t)trampoline_vectors_loop_32;
+			break;
+		}
+		break;
+	case CPU_IMPL_AMPERE:
+		switch (CPU_PART(ci->ci_midr)) {
+		case CPU_PART_AMPERE1:
+			ci->ci_trampoline_vectors =
+			    (vaddr_t)trampoline_vectors_loop_11;
+			break;
+		}
+		break;
+	}
+
+	/*
+	 * If we're not using a loop, let firmware decide.  This also
+	 * covers the original Spectre-V2 in addition to Spectre-BHB.
+	 */
+#if NPSCI > 0
+	if (ci->ci_trampoline_vectors == (vaddr_t)trampoline_vectors_none &&
+	    smccc_needs_arch_workaround_3()) {
+		ci->ci_flush_bp = cpu_flush_bp_noop;
+		if (psci_method() == PSCI_METHOD_HVC)
+			ci->ci_trampoline_vectors =
+			    (vaddr_t)trampoline_vectors_psci_hvc;
+		if (psci_method() == PSCI_METHOD_SMC)
+			ci->ci_trampoline_vectors =
+			    (vaddr_t)trampoline_vectors_psci_smc;
+	}
+#endif
+
+	/* Prefer CLRBHB to mitigate Spectre-BHB. */
+	id = READ_SPECIALREG(id_aa64isar2_el1);
+	if (ID_AA64ISAR2_CLRBHB(id) >= ID_AA64ISAR2_CLRBHB_IMPL)
+		ci->ci_trampoline_vectors = (vaddr_t)trampoline_vectors_clrbhb;
+
+	/* ECBHB tells us Spectre-BHB is mitigated. */
+	id = READ_SPECIALREG(id_aa64mmfr1_el1);
+	if (ID_AA64MMFR1_ECBHB(id) >= ID_AA64MMFR1_ECBHB_IMPL)
+		ci->ci_trampoline_vectors = (vaddr_t)trampoline_vectors_none;
+
+	/*
+	 * The architecture has been updated to explicitly tell us if
+	 * we're not vulnerable to Spectre-BHB.
+	 */
+	id = READ_SPECIALREG(id_aa64pfr0_el1);
+	if (ID_AA64PFR0_CSV2(id) >= ID_AA64PFR0_CSV2_HCXT)
+		ci->ci_trampoline_vectors = (vaddr_t)trampoline_vectors_none;
+}
+
+/*
+ * Enable mitigation for Spectre-V4 speculative store bypass
+ * vulnerabilities (CVE-2018-3639).
+ */
+void
+cpu_mitigate_spectre_v4(struct cpu_info *ci)
+{
+	uint64_t id;
+
+	switch (CPU_IMPL(ci->ci_midr)) {
+	case CPU_IMPL_ARM:
+		switch (CPU_PART(ci->ci_midr)) {
+		case CPU_PART_CORTEX_A35:
+		case CPU_PART_CORTEX_A53:
+		case CPU_PART_CORTEX_A55:
+			/* Not vulnerable. */
+			return;
+		}
+		break;
+	case CPU_IMPL_QCOM:
+		switch (CPU_PART(ci->ci_midr)) {
+		case CPU_PART_KRYO400_SILVER:
+			/* Not vulnerable. */
+			return;
+		}
+		break;
+	}
+
+	/* SSBS tells us Spectre-V4 is mitigated. */
+	id = READ_SPECIALREG(id_aa64pfr1_el1);
+	if (ID_AA64PFR1_SSBS(id) >= ID_AA64PFR1_SSBS_PSTATE)
+		return;
+
+	/* Enable firmware workaround if required. */
+	smccc_enable_arch_workaround_2();
+}
+
 void
 cpu_identify(struct cpu_info *ci)
 {
@@ -274,13 +458,14 @@ cpu_identify(struct cpu_info *ci)
 	static uint64_t prev_id_aa64pfr0;
 	static uint64_t prev_id_aa64pfr1;
 	uint64_t midr, impl, part;
-	uint64_t clidr, id;
-	uint32_t ctr, ccsidr, sets, ways, line;
+	uint64_t clidr, ccsidr, id;
+	uint32_t ctr, sets, ways, line;
 	const char *impl_name = NULL;
 	const char *part_name = NULL;
 	const char *il1p_name = NULL;
 	const char *sep;
 	struct cpu_cores *coreselecter = cpu_cores_none;
+	int ccidx;
 	int i;
 
 	midr = READ_SPECIALREG(midr_el1);
@@ -333,7 +518,18 @@ cpu_identify(struct cpu_info *ci)
 		break;
 	}
 
+	id = READ_SPECIALREG(id_aa64mmfr2_el1);
 	clidr = READ_SPECIALREG(clidr_el1);
+	if (ID_AA64MMFR2_CCIDX(id) > ID_AA64MMFR2_CCIDX_IMPL) {
+		/* Reserved value.  Don't print cache information. */
+		clidr = 0;
+	} else if (ID_AA64MMFR2_CCIDX(id) == ID_AA64MMFR2_CCIDX_IMPL) {
+		/* CCSIDR_EL1 uses the new 64-bit format. */
+		ccidx = 1;
+	} else {
+		/* CCSIDR_EL1 uses the old 32-bit format. */
+		ccidx = 0;
+	}
 	for (i = 0; i < 7; i++) {
 		if ((clidr & CLIDR_CTYPE_MASK) == 0)
 			break;
@@ -344,9 +540,15 @@ cpu_identify(struct cpu_info *ci)
 			    i << CSSELR_LEVEL_SHIFT | CSSELR_IND);
 			__asm volatile("isb");
 			ccsidr = READ_SPECIALREG(ccsidr_el1);
-			sets = CCSIDR_SETS(ccsidr);
-			ways = CCSIDR_WAYS(ccsidr);
-			line = CCSIDR_LINE_SIZE(ccsidr);
+			if (ccidx) {
+				sets = CCSIDR_CCIDX_SETS(ccsidr);
+				ways = CCSIDR_CCIDX_WAYS(ccsidr);
+				line = CCSIDR_CCIDX_LINE_SIZE(ccsidr);
+			} else {
+				sets = CCSIDR_SETS(ccsidr);
+				ways = CCSIDR_WAYS(ccsidr);
+				line = CCSIDR_LINE_SIZE(ccsidr);
+			}
 			printf("%s %dKB %db/line %d-way L%d %sI-cache", sep,
 			    (sets * ways * line) / 1024, line, ways, (i + 1),
 			    il1p_name);
@@ -357,9 +559,15 @@ cpu_identify(struct cpu_info *ci)
 			WRITE_SPECIALREG(csselr_el1, i << CSSELR_LEVEL_SHIFT);
 			__asm volatile("isb");
 			ccsidr = READ_SPECIALREG(ccsidr_el1);
-			sets = CCSIDR_SETS(ccsidr);
-			ways = CCSIDR_WAYS(ccsidr);
-			line = CCSIDR_LINE_SIZE(ccsidr);
+			if (ccidx) {
+				sets = CCSIDR_CCIDX_SETS(ccsidr);
+				ways = CCSIDR_CCIDX_WAYS(ccsidr);
+				line = CCSIDR_CCIDX_LINE_SIZE(ccsidr);
+			} else {
+				sets = CCSIDR_SETS(ccsidr);
+				ways = CCSIDR_WAYS(ccsidr);
+				line = CCSIDR_LINE_SIZE(ccsidr);
+			}
 			printf("%s %dKB %db/line %d-way L%d D-cache", sep,
 			    (sets * ways * line) / 1024, line, ways, (i + 1));
 			sep = ",";
@@ -368,120 +576,24 @@ cpu_identify(struct cpu_info *ci)
 			WRITE_SPECIALREG(csselr_el1, i << CSSELR_LEVEL_SHIFT);
 			__asm volatile("isb");
 			ccsidr = READ_SPECIALREG(ccsidr_el1);
-			sets = CCSIDR_SETS(ccsidr);
-			ways = CCSIDR_WAYS(ccsidr);
-			line = CCSIDR_LINE_SIZE(ccsidr);
+			if (ccidx) {
+				sets = CCSIDR_CCIDX_SETS(ccsidr);
+				ways = CCSIDR_CCIDX_WAYS(ccsidr);
+				line = CCSIDR_CCIDX_LINE_SIZE(ccsidr);
+			} else {
+				sets = CCSIDR_SETS(ccsidr);
+				ways = CCSIDR_WAYS(ccsidr);
+				line = CCSIDR_LINE_SIZE(ccsidr);
+			}
 			printf("%s %dKB %db/line %d-way L%d cache", sep,
 			    (sets * ways * line) / 1024, line, ways, (i + 1));
 		}
 		clidr >>= 3;
 	}
 
-	/*
-	 * Some ARM processors are vulnerable to branch target
-	 * injection attacks (CVE-2017-5715).
-	 */
-	switch (impl) {
-	case CPU_IMPL_ARM:
-		switch (part) {
-		case CPU_PART_CORTEX_A35:
-		case CPU_PART_CORTEX_A53:
-		case CPU_PART_CORTEX_A55:
-			/* Not vulnerable. */
-			ci->ci_flush_bp = cpu_flush_bp_noop;
-			break;
-		default:
-			/*
-			 * Potentially vulnerable; call into the
-			 * firmware and hope we're running on top of
-			 * Arm Trusted Firmware with a fix for
-			 * Security Advisory TFV 6.
-			 */
-			ci->ci_flush_bp = cpu_flush_bp_psci;
-			break;
-		}
-		break;
-	default:
-		/* Not much we can do for an unknown processor.  */
-		ci->ci_flush_bp = cpu_flush_bp_noop;
-		break;
-	}
-
-	/*
-	 * The architecture has been updated to explicitly tell us if
-	 * we're not vulnerable to regular Spectre.
-	 */
-	id = READ_SPECIALREG(id_aa64pfr0_el1);
-	if (ID_AA64PFR0_CSV2(id) >= ID_AA64PFR0_CSV2_IMPL)
-		ci->ci_flush_bp = cpu_flush_bp_noop;
-
-	/*
-	 * But we might still be vulnerable to Spectre-BHB.  If we know the
-	 * CPU, we can add a branchy loop that cleans the BHB.
-	 */
-	if (impl == CPU_IMPL_ARM) {
-		switch (part) {
-		case CPU_PART_CORTEX_A72:
-			ci->ci_trampoline_vectors =
-			    (vaddr_t)trampoline_vectors_loop_8;
-			break;
-		case CPU_PART_CORTEX_A76:
-		case CPU_PART_CORTEX_A76AE:
-		case CPU_PART_CORTEX_A77:
-		case CPU_PART_NEOVERSE_N1:
-			ci->ci_trampoline_vectors =
-			    (vaddr_t)trampoline_vectors_loop_24;
-			break;
-		case CPU_PART_CORTEX_A78:
-		case CPU_PART_CORTEX_A78AE:
-		case CPU_PART_CORTEX_A78C:
-		case CPU_PART_CORTEX_X1:
-		case CPU_PART_CORTEX_X2:
-		case CPU_PART_CORTEX_A710:
-		case CPU_PART_NEOVERSE_N2:
-		case CPU_PART_NEOVERSE_V1:
-			ci->ci_trampoline_vectors =
-			    (vaddr_t)trampoline_vectors_loop_32;
-			break;
-		}
-	}
-
-	/*
-	 * If we're not using a loop, try and call into PSCI.  This also
-	 * covers the original Spectre in addition to Spectre-BHB.
-	 */
-#if NPSCI > 0
-	if (ci->ci_trampoline_vectors == (vaddr_t)trampoline_vectors_none &&
-	    psci_flush_bp_has_bhb()) {
-		ci->ci_flush_bp = cpu_flush_bp_noop;
-		if (psci_method() == PSCI_METHOD_HVC)
-			ci->ci_trampoline_vectors =
-			    (vaddr_t)trampoline_vectors_psci_hvc;
-		if (psci_method() == PSCI_METHOD_SMC)
-			ci->ci_trampoline_vectors =
-			    (vaddr_t)trampoline_vectors_psci_smc;
-	}
-#endif
-
-	/* Prefer CLRBHB to mitigate Spectre-BHB. */
-	id = READ_SPECIALREG(id_aa64isar2_el1);
-	if (ID_AA64ISAR2_CLRBHB(id) >= ID_AA64ISAR2_CLRBHB_IMPL)
-		ci->ci_trampoline_vectors = (vaddr_t)trampoline_vectors_clrbhb;
-
-	/* ECBHB tells us Spectre-BHB is mitigated. */
-	id = READ_SPECIALREG(id_aa64mmfr1_el1);
-	if (ID_AA64MMFR1_ECBHB(id) >= ID_AA64MMFR1_ECBHB_IMPL)
-		ci->ci_trampoline_vectors = (vaddr_t)trampoline_vectors_none;
-
-	/*
-	 * The architecture has been updated to explicitly tell us if
-	 * we're not vulnerable.
-	 */
-	id = READ_SPECIALREG(id_aa64pfr0_el1);
-	if (ID_AA64PFR0_CSV2(id) >= ID_AA64PFR0_CSV2_HCXT) {
-		ci->ci_flush_bp = cpu_flush_bp_noop;
-		ci->ci_trampoline_vectors = (vaddr_t)trampoline_vectors_none;
-	}
+	cpu_mitigate_spectre_v2(ci);
+	cpu_mitigate_spectre_bhb(ci);
+	cpu_mitigate_spectre_v4(ci);
 
 	/*
 	 * Apple CPUs provide detailed information for SError.
@@ -795,11 +907,11 @@ cpu_identify(struct cpu_info *ci)
 		sep = ",";
 	}
 
-	if (ID_AA64PFR1_SBSS(id) >= ID_AA64PFR1_SBSS_PSTATE) {
-		printf("%sSBSS", sep);
+	if (ID_AA64PFR1_SSBS(id) >= ID_AA64PFR1_SSBS_PSTATE) {
+		printf("%sSSBS", sep);
 		sep = ",";
 	}
-	if (ID_AA64PFR1_SBSS(id) >= ID_AA64PFR1_SBSS_PSTATE_MSR)
+	if (ID_AA64PFR1_SSBS(id) >= ID_AA64PFR1_SSBS_PSTATE_MSR)
 		printf("+MSR");
 
 	if (ID_AA64PFR1_MTE(id) >= ID_AA64PFR1_MTE_IMPL) {

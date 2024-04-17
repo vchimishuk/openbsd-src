@@ -1,4 +1,4 @@
-/*	$OpenBSD: sys_process.c,v 1.95 2023/11/21 14:00:13 bluhm Exp $	*/
+/*	$OpenBSD: sys_process.c,v 1.97 2024/04/02 08:27:22 deraadt Exp $	*/
 /*	$NetBSD: sys_process.c,v 1.55 1996/05/15 06:17:47 tls Exp $	*/
 
 /*-
@@ -375,7 +375,7 @@ ptrace_ctrl(struct proc *p, int req, pid_t pid, caddr_t addr, int data)
 		 *	(5) it's not owned by you, or the last exec
 		 *	    gave us setuid/setgid privs (unless
 		 *	    you're root), or...
-		 * 
+		 *
 		 *      [Note: once PS_SUGID or PS_SUGIDEXEC gets set in
 		 *	execve(), they stay set until the process does
 		 *	another execve().  Hence this prevents a setuid
@@ -493,6 +493,7 @@ ptrace_ctrl(struct proc *p, int req, pid_t pid, caddr_t addr, int data)
 		if (t->p_stat == SSTOP) {
 			tr->ps_xsig = data;
 			SCHED_LOCK(s);
+			unsleep(t);
 			setrunnable(t);
 			SCHED_UNLOCK(s);
 		} else {

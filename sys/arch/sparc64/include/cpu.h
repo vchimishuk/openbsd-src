@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.h,v 1.104 2024/02/25 19:15:50 cheloha Exp $	*/
+/*	$OpenBSD: cpu.h,v 1.107 2024/03/29 21:27:53 miod Exp $	*/
 /*	$NetBSD: cpu.h,v 1.28 2001/06/14 22:56:58 thorpej Exp $ */
 
 /*
@@ -113,6 +113,7 @@ struct cpu_info {
 	/* Most important fields first */
 	struct proc		*ci_curproc;
 	struct pcb		*ci_cpcb;	/* also initial stack */
+	paddr_t			ci_cpcbpaddr;
 	struct cpu_info		*ci_next;
 
 	struct proc		*ci_fpproc;
@@ -269,9 +270,8 @@ do {									\
 } while (0)
 
 /*
- * Arguments to hardclock, softclock and gatherstats encapsulate the
- * previous machine state in an opaque clockframe.  The ipl is here
- * as well for strayintr (see locore.s:interrupt and intr.c:strayintr).
+ * Arguments to clockintr_dispatch encapsulate the
+ * previous machine state in an opaque clockframe.
  */
 struct clockframe {
 	struct trapframe t;
@@ -311,13 +311,11 @@ void signotify(struct proc *);
 /* cpu.c */
 int	cpu_myid(void);
 /* machdep.c */
-int	ldcontrolb(caddr_t);
 void	dumpconf(void);
 caddr_t	reserve_dumppages(caddr_t);
 /* clock.c */
 struct timeval;
 int	clockintr(void *);/* level 10 (clock) interrupt code */
-int	statintr(void *);	/* level 14 (statclock) interrupt code */
 /* locore.s */
 struct fpstate;
 void	savefpstate(struct fpstate *);
@@ -330,10 +328,6 @@ void 	proc_trampoline(void);
 struct pcb;
 void	snapshot(struct pcb *);
 struct frame *getfp(void);
-int	xldcontrolb(caddr_t, struct pcb *);
-void	copywords(const void *, void *, size_t);
-void	qcopy(const void *, void *, size_t);
-void	qzero(void *, size_t);
 void	switchtoctx(int);
 /* trap.c */
 void	pmap_unuse_final(struct proc *);
@@ -341,10 +335,6 @@ int	rwindow_save(struct proc *);
 /* vm_machdep.c */
 void	fpusave_cpu(struct cpu_info *, int);
 void	fpusave_proc(struct proc *, int);
-/* cons.c */
-int	cnrom(void);
-/* zs.c */
-void zsconsole(struct tty *, int, int, void (**)(struct tty *, int));
 /* fb.c */
 void	fb_unblank(void);
 /* ltc.c */
@@ -373,9 +363,6 @@ struct trapvec {
 	int	tv_instr[8];		/* the eight instructions */
 };
 extern struct trapvec trapbase[];	/* the 256 vectors */
-
-extern void wzero(void *, u_int);
-extern void wcopy(const void *, void *, u_int);
 
 struct blink_led {
 	void (*bl_func)(void *, int);

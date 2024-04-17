@@ -1,4 +1,4 @@
-/* $OpenBSD: ec_asn1.c,v 1.48 2023/07/07 19:37:53 beck Exp $ */
+/* $OpenBSD: ec_asn1.c,v 1.52 2024/04/15 15:46:29 tb Exp $ */
 /*
  * Written by Nils Larsch for the OpenSSL project.
  */
@@ -125,14 +125,14 @@ typedef struct ec_parameters_st {
 	ASN1_INTEGER *cofactor;
 } ECPARAMETERS;
 
-struct ecpk_parameters_st {
+typedef struct ecpk_parameters_st {
 	int type;
 	union {
 		ASN1_OBJECT *named_curve;
 		ECPARAMETERS *parameters;
 		ASN1_NULL *implicitlyCA;
 	} value;
-} /* ECPKPARAMETERS */ ;
+} ECPKPARAMETERS;
 
 /* SEC1 ECPrivateKey */
 typedef struct ec_privatekey_st {
@@ -167,7 +167,7 @@ static const ASN1_TEMPLATE X9_62_PENTANOMIAL_seq_tt[] = {
 	},
 };
 
-const ASN1_ITEM X9_62_PENTANOMIAL_it = {
+static const ASN1_ITEM X9_62_PENTANOMIAL_it = {
 	.itype = ASN1_ITYPE_SEQUENCE,
 	.utype = V_ASN1_SEQUENCE,
 	.templates = X9_62_PENTANOMIAL_seq_tt,
@@ -176,21 +176,6 @@ const ASN1_ITEM X9_62_PENTANOMIAL_it = {
 	.size = sizeof(X9_62_PENTANOMIAL),
 	.sname = "X9_62_PENTANOMIAL",
 };
-
-X9_62_PENTANOMIAL *X9_62_PENTANOMIAL_new(void);
-void X9_62_PENTANOMIAL_free(X9_62_PENTANOMIAL *a);
-
-X9_62_PENTANOMIAL *
-X9_62_PENTANOMIAL_new(void)
-{
-	return (X9_62_PENTANOMIAL*)ASN1_item_new(&X9_62_PENTANOMIAL_it);
-}
-
-void
-X9_62_PENTANOMIAL_free(X9_62_PENTANOMIAL *a)
-{
-	ASN1_item_free((ASN1_VALUE *)a, &X9_62_PENTANOMIAL_it);
-}
 
 static const ASN1_TEMPLATE char_two_def_tt = {
 	.flags = 0,
@@ -267,7 +252,7 @@ static const ASN1_TEMPLATE X9_62_CHARACTERISTIC_TWO_seq_tt[] = {
 	},
 };
 
-const ASN1_ITEM X9_62_CHARACTERISTIC_TWO_it = {
+static const ASN1_ITEM X9_62_CHARACTERISTIC_TWO_it = {
 	.itype = ASN1_ITYPE_SEQUENCE,
 	.utype = V_ASN1_SEQUENCE,
 	.templates = X9_62_CHARACTERISTIC_TWO_seq_tt,
@@ -276,21 +261,6 @@ const ASN1_ITEM X9_62_CHARACTERISTIC_TWO_it = {
 	.size = sizeof(X9_62_CHARACTERISTIC_TWO),
 	.sname = "X9_62_CHARACTERISTIC_TWO",
 };
-
-X9_62_CHARACTERISTIC_TWO *X9_62_CHARACTERISTIC_TWO_new(void);
-void X9_62_CHARACTERISTIC_TWO_free(X9_62_CHARACTERISTIC_TWO *a);
-
-X9_62_CHARACTERISTIC_TWO *
-X9_62_CHARACTERISTIC_TWO_new(void)
-{
-	return (X9_62_CHARACTERISTIC_TWO*)ASN1_item_new(&X9_62_CHARACTERISTIC_TWO_it);
-}
-
-void
-X9_62_CHARACTERISTIC_TWO_free(X9_62_CHARACTERISTIC_TWO *a)
-{
-	ASN1_item_free((ASN1_VALUE *)a, &X9_62_CHARACTERISTIC_TWO_it);
-}
 
 static const ASN1_TEMPLATE fieldID_def_tt = {
 	.flags = 0,
@@ -349,7 +319,7 @@ static const ASN1_TEMPLATE X9_62_FIELDID_seq_tt[] = {
 	},
 };
 
-const ASN1_ITEM X9_62_FIELDID_it = {
+static const ASN1_ITEM X9_62_FIELDID_it = {
 	.itype = ASN1_ITYPE_SEQUENCE,
 	.utype = V_ASN1_SEQUENCE,
 	.templates = X9_62_FIELDID_seq_tt,
@@ -383,7 +353,7 @@ static const ASN1_TEMPLATE X9_62_CURVE_seq_tt[] = {
 	},
 };
 
-const ASN1_ITEM X9_62_CURVE_it = {
+static const ASN1_ITEM X9_62_CURVE_it = {
 	.itype = ASN1_ITYPE_SEQUENCE,
 	.utype = V_ASN1_SEQUENCE,
 	.templates = X9_62_CURVE_seq_tt,
@@ -448,16 +418,16 @@ const ASN1_ITEM ECPARAMETERS_it = {
 	.sname = "ECPARAMETERS",
 };
 
-ECPARAMETERS *ECPARAMETERS_new(void);
-void ECPARAMETERS_free(ECPARAMETERS *a);
+static ECPARAMETERS *ECPARAMETERS_new(void);
+static void ECPARAMETERS_free(ECPARAMETERS *a);
 
-ECPARAMETERS *
+static ECPARAMETERS *
 ECPARAMETERS_new(void)
 {
 	return (ECPARAMETERS*)ASN1_item_new(&ECPARAMETERS_it);
 }
 
-void
+static void
 ECPARAMETERS_free(ECPARAMETERS *a)
 {
 	ASN1_item_free((ASN1_VALUE *)a, &ECPARAMETERS_it);
@@ -497,31 +467,31 @@ const ASN1_ITEM ECPKPARAMETERS_it = {
 	.sname = "ECPKPARAMETERS",
 };
 
-ECPKPARAMETERS *ECPKPARAMETERS_new(void);
-void ECPKPARAMETERS_free(ECPKPARAMETERS *a);
-ECPKPARAMETERS *d2i_ECPKPARAMETERS(ECPKPARAMETERS **a, const unsigned char **in, long len);
-int i2d_ECPKPARAMETERS(const ECPKPARAMETERS *a, unsigned char **out);
+static ECPKPARAMETERS *ECPKPARAMETERS_new(void);
+static void ECPKPARAMETERS_free(ECPKPARAMETERS *a);
+static ECPKPARAMETERS *d2i_ECPKPARAMETERS(ECPKPARAMETERS **a, const unsigned char **in, long len);
+static int i2d_ECPKPARAMETERS(const ECPKPARAMETERS *a, unsigned char **out);
 
-ECPKPARAMETERS *
+static ECPKPARAMETERS *
 d2i_ECPKPARAMETERS(ECPKPARAMETERS **a, const unsigned char **in, long len)
 {
 	return (ECPKPARAMETERS *)ASN1_item_d2i((ASN1_VALUE **)a, in, len,
 	    &ECPKPARAMETERS_it);
 }
 
-int
+static int
 i2d_ECPKPARAMETERS(const ECPKPARAMETERS *a, unsigned char **out)
 {
 	return ASN1_item_i2d((ASN1_VALUE *)a, out, &ECPKPARAMETERS_it);
 }
 
-ECPKPARAMETERS *
+static ECPKPARAMETERS *
 ECPKPARAMETERS_new(void)
 {
 	return (ECPKPARAMETERS *)ASN1_item_new(&ECPKPARAMETERS_it);
 }
 
-void
+static void
 ECPKPARAMETERS_free(ECPKPARAMETERS *a)
 {
 	ASN1_item_free((ASN1_VALUE *)a, &ECPKPARAMETERS_it);
@@ -558,7 +528,7 @@ static const ASN1_TEMPLATE EC_PRIVATEKEY_seq_tt[] = {
 	},
 };
 
-const ASN1_ITEM EC_PRIVATEKEY_it = {
+static const ASN1_ITEM EC_PRIVATEKEY_it = {
 	.itype = ASN1_ITYPE_SEQUENCE,
 	.utype = V_ASN1_SEQUENCE,
 	.templates = EC_PRIVATEKEY_seq_tt,
@@ -568,31 +538,31 @@ const ASN1_ITEM EC_PRIVATEKEY_it = {
 	.sname = "EC_PRIVATEKEY",
 };
 
-EC_PRIVATEKEY *EC_PRIVATEKEY_new(void);
-void EC_PRIVATEKEY_free(EC_PRIVATEKEY *a);
-EC_PRIVATEKEY *d2i_EC_PRIVATEKEY(EC_PRIVATEKEY **a, const unsigned char **in, long len);
-int i2d_EC_PRIVATEKEY(const EC_PRIVATEKEY *a, unsigned char **out);
+static EC_PRIVATEKEY *EC_PRIVATEKEY_new(void);
+static void EC_PRIVATEKEY_free(EC_PRIVATEKEY *a);
+static EC_PRIVATEKEY *d2i_EC_PRIVATEKEY(EC_PRIVATEKEY **a, const unsigned char **in, long len);
+static int i2d_EC_PRIVATEKEY(const EC_PRIVATEKEY *a, unsigned char **out);
 
-EC_PRIVATEKEY *
+static EC_PRIVATEKEY *
 d2i_EC_PRIVATEKEY(EC_PRIVATEKEY **a, const unsigned char **in, long len)
 {
 	return (EC_PRIVATEKEY *)ASN1_item_d2i((ASN1_VALUE **)a, in, len,
 	    &EC_PRIVATEKEY_it);
 }
 
-int
+static int
 i2d_EC_PRIVATEKEY(const EC_PRIVATEKEY *a, unsigned char **out)
 {
 	return ASN1_item_i2d((ASN1_VALUE *)a, out, &EC_PRIVATEKEY_it);
 }
 
-EC_PRIVATEKEY *
+static EC_PRIVATEKEY *
 EC_PRIVATEKEY_new(void)
 {
 	return (EC_PRIVATEKEY *)ASN1_item_new(&EC_PRIVATEKEY_it);
 }
 
-void
+static void
 EC_PRIVATEKEY_free(EC_PRIVATEKEY *a)
 {
 	ASN1_item_free((ASN1_VALUE *)a, &EC_PRIVATEKEY_it);

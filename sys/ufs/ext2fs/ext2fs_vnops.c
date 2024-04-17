@@ -1,4 +1,4 @@
-/*	$OpenBSD: ext2fs_vnops.c,v 1.91 2023/03/08 04:43:09 guenther Exp $	*/
+/*	$OpenBSD: ext2fs_vnops.c,v 1.93 2024/04/13 23:44:11 jsg Exp $	*/
 /*	$NetBSD: ext2fs_vnops.c,v 1.1 1997/06/11 09:34:09 bouyer Exp $	*/
 
 /*
@@ -435,16 +435,6 @@ ext2fs_link(void *v)
 	if ((cnp->cn_flags & HASBUF) == 0)
 		panic("ext2fs_link: no name");
 #endif
-	if (vp->v_type == VDIR) {
-		VOP_ABORTOP(dvp, cnp);
-		error = EISDIR;
-		goto out2;
-	}
-	if (dvp->v_mount != vp->v_mount) {
-		VOP_ABORTOP(dvp, cnp);
-		error = EXDEV;
-		goto out2;
-	}
 	if (dvp != vp && (error = vn_lock(vp, LK_EXCLUSIVE))) {
 		VOP_ABORTOP(dvp, cnp);
 		goto out2;
@@ -829,7 +819,7 @@ abortit:
 				UIO_SYSSPACE, IO_NODELOCKED,
 				tcnp->cn_cred, NULL, curproc);
 			if (error == 0) {
-					namlen = dirbuf.dotdot_namlen;
+				namlen = dirbuf.dotdot_namlen;
 				if (namlen != 2 ||
 				    dirbuf.dotdot_name[0] != '.' ||
 				    dirbuf.dotdot_name[1] != '.') {

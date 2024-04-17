@@ -1,4 +1,4 @@
-/*	$OpenBSD: socketvar.h,v 1.124 2024/02/12 22:48:27 mvs Exp $	*/
+/*	$OpenBSD: socketvar.h,v 1.129 2024/04/11 13:32:51 mvs Exp $	*/
 /*	$NetBSD: socketvar.h,v 1.18 1996/02/09 18:25:38 christos Exp $	*/
 
 /*-
@@ -86,7 +86,6 @@ struct socket {
 	short	so_q0len;		/* partials on so_q0 */
 	short	so_qlen;		/* number of connections on so_q */
 	short	so_qlimit;		/* max number queued connections */
-	u_long	so_newconn;		/* # of pending sonewconn() threads */
 	short	so_timeo;		/* connection timeout */
 	u_long	so_oobmark;		/* chars to oob mark */
 	u_int	so_error;		/* error affecting connection */
@@ -106,7 +105,8 @@ struct socket {
  * Variables for socket buffering.
  */
 	struct	sockbuf {
-		struct mutex sb_mtx;
+		struct rwlock sb_lock; 
+		struct mutex  sb_mtx;
 /* The following fields are all zeroed on flush. */
 #define	sb_startzero	sb_cc
 		u_long	sb_cc;		/* actual chars in buffer */
@@ -127,14 +127,15 @@ struct socket {
 		uint64_t sb_timeo_nsecs;/* timeout for read/write */
 		struct klist sb_klist;	/* process selecting read/write */
 	} so_rcv, so_snd;
-#define	SB_MAX		(2*1024*1024)	/* default for max chars in sockbuf */
-#define	SB_LOCK		0x01		/* lock on data queue */
-#define	SB_WANT		0x02		/* someone is waiting to lock */
-#define	SB_WAIT		0x04		/* someone is waiting for data/space */
-#define	SB_ASYNC	0x10		/* ASYNC I/O, need signals */
-#define	SB_SPLICE	0x20		/* buffer is splice source or drain */
-#define	SB_NOINTR	0x40		/* operations not interruptible */
-#define SB_MTXLOCK	0x80		/* use sb_mtx for sockbuf protection */
+#define SB_MAX		(2*1024*1024)	/* default for max chars in sockbuf */
+#define SB_LOCK		0x0001		/* lock on data queue */
+#define SB_WANT		0x0002		/* someone is waiting to lock */
+#define SB_WAIT		0x0004		/* someone is waiting for data/space */
+#define SB_ASYNC	0x0010		/* ASYNC I/O, need signals */
+#define SB_SPLICE	0x0020		/* buffer is splice source or drain */
+#define SB_NOINTR	0x0040		/* operations not interruptible */
+#define SB_MTXLOCK	0x0080		/* use sb_mtx for sockbuf protection */
+#define SB_OWNLOCK	0x0100		/* sblock() doesn't need solock() */
 
 	void	(*so_upcall)(struct socket *so, caddr_t arg, int waitf);
 	caddr_t	so_upcallarg;		/* Arg for above */
@@ -168,8 +169,7 @@ struct socket {
 #define	SS_CONNECTOUT		0x1000	/* connect, not accept, at this end */
 #define	SS_ISSENDING		0x2000	/* hint for lower layer */
 #define	SS_DNS			0x4000	/* created using SOCK_DNS socket(2) */
-#define	SS_NEWCONN_WAIT		0x8000	/* waiting sonewconn() relock */
-#define	SS_YP			0x10000	/* created using ypconnect(2) */
+#define	SS_YP			0x8000	/* created using ypconnect(2) */
 
 #ifdef _KERNEL
 
@@ -242,7 +242,10 @@ sb_notify(struct socket *so, struct sockbuf *sb)
 static inline long
 sbspace(struct socket *so, struct sockbuf *sb)
 {
-	soassertlocked_readonly(so);
+	if (sb->sb_flags & SB_MTXLOCK)
+		sbmtxassertlocked(so, sb);
+	else
+		soassertlocked_readonly(so);
 
 	return lmin(sb->sb_hiwat - sb->sb_cc, sb->sb_mbmax - sb->sb_mbcnt);
 }
@@ -317,6 +320,7 @@ int sblock(struct socket *, struct sockbuf *, int);
 
 /* release lock on sockbuf sb */
 void sbunlock(struct socket *, struct sockbuf *);
+void sbunlock_locked(struct socket *, struct sockbuf *);
 
 #define	SB_EMPTY_FIXUP(sb) do {						\
 	if ((sb)->sb_mb == NULL) {					\
@@ -364,6 +368,7 @@ int	sbcheckreserve(u_long, u_long);
 int	sbchecklowmem(void);
 int	sbreserve(struct socket *, struct sockbuf *, u_long);
 int	sbwait(struct socket *, struct sockbuf *);
+int	sbwait_locked(struct socket *, struct sockbuf *);
 void	soinit(void);
 void	soabort(struct socket *);
 int	soaccept(struct socket *, struct mbuf *);

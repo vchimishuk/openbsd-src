@@ -1,4 +1,4 @@
-#	$OpenBSD: test-exec.sh,v 1.107 2024/02/19 09:25:52 dtucker Exp $
+#	$OpenBSD: test-exec.sh,v 1.110 2024/04/03 06:01:11 anton Exp $
 #	Placed in the Public Domain.
 
 #SUDO=sudo
@@ -62,6 +62,9 @@ DROPBEAR=/usr/local/bin/dropbear
 DBCLIENT=/usr/local/bin/dbclient
 DROPBEARKEY=/usr/local/bin/dropbearkey
 DROPBEARCONVERT=/usr/local/bin/dropbearconvert
+
+# So we can override this in Portable.
+TEST_SHELL="${TEST_SHELL:-/bin/sh}"
 
 # Tools used by multiple tests
 NC=nc
@@ -240,14 +243,14 @@ ssh_logfile ()
 # [kbytes] to ensure the file is at least that large.
 DATANAME=data
 DATA=$OBJ/${DATANAME}
-cat ${SSHAGENT} >${DATA}
+cat ${SSH} >${DATA}
 COPY=$OBJ/copy
 rm -f ${COPY}
 
 increase_datafile_size()
 {
 	while [ `du -k ${DATA} | cut -f1` -lt $1 ]; do
-		cat ${SSHAGENT} >>${DATA}
+		cat ${SSH} >>${DATA}
 	done
 }
 
@@ -608,17 +611,18 @@ puttysetup() {
 	echo "ProxyLocalhost=1" >> ${OBJ}/.putty/sessions/localhost_proxy
 
 	PUTTYVER="`${PLINK} --version | awk '/plink: Release/{print $3}'`"
+	PUTTYMAJORVER="`echo ${PUTTYVER} | cut -f1 -d.`"
 	PUTTYMINORVER="`echo ${PUTTYVER} | cut -f2 -d.`"
-	verbose "plink version ${PUTTYVER} minor ${PUTTYMINORVER}"
+	verbose "plink version ${PUTTYVER} major ${PUTTYMAJORVER} minor ${PUTTYMINORVER}"
 
 	# Re-enable ssh-rsa on older PuTTY versions since they don't do newer
 	# key types.
-	if [ "$PUTTYMINORVER" -lt "76" ]; then
+	if [ "$PUTTYMAJORVER" -eq "0" ] && [ "$PUTTYMINORVER" -lt "76" ]; then
 		echo "HostKeyAlgorithms +ssh-rsa" >> ${OBJ}/sshd_proxy
 		echo "PubkeyAcceptedKeyTypes +ssh-rsa" >> ${OBJ}/sshd_proxy
 	fi
 
-	if [ "$PUTTYMINORVER" -le "64" ]; then
+	if [ "$PUTTYMAJORVER" -eq "0" ] && [ "$PUTTYMINORVER" -le "64" ]; then
 		echo "KexAlgorithms +diffie-hellman-group14-sha1" \
 		    >>${OBJ}/sshd_proxy
 	fi

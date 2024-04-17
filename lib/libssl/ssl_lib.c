@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_lib.c,v 1.321 2024/03/02 11:48:55 tb Exp $ */
+/* $OpenBSD: ssl_lib.c,v 1.323 2024/04/15 16:00:05 tb Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -160,8 +160,6 @@
 #include "ssl_sigalgs.h"
 #include "ssl_tlsext.h"
 #include "tls12_internal.h"
-
-const char *SSL_version_str = OPENSSL_VERSION_TEXT;
 
 int
 SSL_clear(SSL *s)
@@ -605,8 +603,7 @@ LSSL_ALIAS(SSL_free);
 int
 SSL_up_ref(SSL *s)
 {
-	int refs = CRYPTO_add(&s->references, 1, CRYPTO_LOCK_SSL);
-	return (refs > 1) ? 1 : 0;
+	return CRYPTO_add(&s->references, 1, CRYPTO_LOCK_SSL) > 1;
 }
 LSSL_ALIAS(SSL_up_ref);
 
@@ -2217,8 +2214,7 @@ LSSL_ALIAS(SSL_CTX_free);
 int
 SSL_CTX_up_ref(SSL_CTX *ctx)
 {
-	int refs = CRYPTO_add(&ctx->references, 1, CRYPTO_LOCK_SSL_CTX);
-	return ((refs > 1) ? 1 : 0);
+	return CRYPTO_add(&ctx->references, 1, CRYPTO_LOCK_SSL_CTX) > 1;
 }
 LSSL_ALIAS(SSL_CTX_up_ref);
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: parser.c,v 1.130 2024/03/01 08:10:09 tb Exp $ */
+/*	$OpenBSD: parser.c,v 1.134 2024/04/17 15:03:22 tb Exp $ */
 /*
  * Copyright (c) 2019 Claudio Jeker <claudio@openbsd.org>
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
@@ -277,6 +277,9 @@ parse_load_crl_from_mft(struct entity *entp, struct mft *mft, enum location loc,
 		goto out;
 	}
 
+	if ((crl->mftpath = strdup(mft->sia)) == NULL)
+		err(1, NULL);
+
 	*crlfile = fn;
 	free(f);
 
@@ -477,13 +480,11 @@ proc_parser_mft(struct entity *entp, struct mft **mp, char **crlfile,
 
 	if (*mp != NULL) {
 		*crlmtime = crl->thisupdate;
-		if (!crl_insert(&crlt, crl)) {
-			warnx("%s: duplicate AKI %s", file, crl->aki);
-			crl_free(crl);
-		}
-	} else {
-		crl_free(crl);
+		if (crl_insert(&crlt, crl))
+			crl = NULL;
 	}
+	crl_free(crl);
+
 	return file;
 }
 
@@ -670,7 +671,7 @@ proc_parser_tak(char *file, const unsigned char *der, size_t len,
 	}
 
 	/* TAK EE must be signed by self-signed CA */
-	if (a->parent != NULL)
+	if (a->issuer != NULL)
 		goto out;
 
 	tak->talid = a->cert->talid;

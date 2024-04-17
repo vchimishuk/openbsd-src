@@ -1,4 +1,4 @@
-#	$OpenBSD: Makefile,v 1.54 2023/12/27 12:34:32 jsing Exp $
+#	$OpenBSD: Makefile,v 1.56 2024/03/29 07:13:38 joshua Exp $
 
 SUBDIR += aead
 SUBDIR += aes
@@ -26,7 +26,6 @@ SUBDIR += evp
 SUBDIR += exdata
 SUBDIR += free
 SUBDIR += gcm128
-SUBDIR += gost
 SUBDIR += hkdf
 SUBDIR += hmac
 SUBDIR += idea
@@ -49,6 +48,7 @@ SUBDIR += sm3
 SUBDIR += sm4
 SUBDIR += symbols
 SUBDIR += utf8
+SUBDIR += whirlpool
 SUBDIR += wycheproof
 SUBDIR += x509
 

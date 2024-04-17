@@ -1690,7 +1690,6 @@
 ./usr/share/man/man2/msgrcv.2
 ./usr/share/man/man2/msgsnd.2
 ./usr/share/man/man2/msync.2
-./usr/share/man/man2/msyscall.2
 ./usr/share/man/man2/munmap.2
 ./usr/share/man/man2/nanosleep.2
 ./usr/share/man/man2/nfssvc.2
@@ -2193,7 +2192,6 @@
 ./usr/share/man/man3/X509_ATTRIBUTE_new.3
 ./usr/share/man/man3/X509_ATTRIBUTE_set1_object.3
 ./usr/share/man/man3/X509_CINF_new.3
-./usr/share/man/man3/X509_CRL_METHOD_new.3
 ./usr/share/man/man3/X509_CRL_get0_by_serial.3
 ./usr/share/man/man3/X509_CRL_new.3
 ./usr/share/man/man3/X509_CRL_print.3

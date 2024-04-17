@@ -1,4 +1,4 @@
-/* $OpenBSD: ec_ameth.c,v 1.51 2024/01/04 17:01:26 tb Exp $ */
+/* $OpenBSD: ec_ameth.c,v 1.63 2024/04/17 14:01:33 tb Exp $ */
 /* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2006.
  */
@@ -69,6 +69,7 @@
 #include "asn1_local.h"
 #include "ec_local.h"
 #include "evp_local.h"
+#include "x509_local.h"
 
 #ifndef OPENSSL_NO_CMS
 static int ecdh_cms_decrypt(CMS_RecipientInfo *ri);
@@ -637,7 +638,9 @@ ec_pkey_ctrl(EVP_PKEY *pkey, int op, long arg1, void *arg2)
 				return -1;
 			if (!OBJ_find_sigid_by_algs(&snid, hnid, EVP_PKEY_id(pkey)))
 				return -1;
-			X509_ALGOR_set0(alg2, OBJ_nid2obj(snid), V_ASN1_UNDEF, 0);
+			if (!X509_ALGOR_set0_by_nid(alg2, snid, V_ASN1_UNDEF,
+			    NULL))
+				return -1;
 		}
 		return 1;
 
@@ -655,7 +658,9 @@ ec_pkey_ctrl(EVP_PKEY *pkey, int op, long arg1, void *arg2)
 				return -1;
 			if (!OBJ_find_sigid_by_algs(&snid, hnid, EVP_PKEY_id(pkey)))
 				return -1;
-			X509_ALGOR_set0(alg2, OBJ_nid2obj(snid), V_ASN1_UNDEF, 0);
+			if (!X509_ALGOR_set0_by_nid(alg2, snid, V_ASN1_UNDEF,
+			    NULL))
+				return -1;
 		}
 		return 1;
 
@@ -907,77 +912,61 @@ static int
 ecdh_cms_encrypt(CMS_RecipientInfo *ri)
 {
 	EVP_PKEY_CTX *pctx;
-	EVP_PKEY *pkey;
 	EVP_CIPHER_CTX *ctx;
 	int keylen;
 	X509_ALGOR *talg, *wrap_alg = NULL;
 	const ASN1_OBJECT *aoid;
 	ASN1_BIT_STRING *pubkey;
-	ASN1_STRING *wrap_str;
+	ASN1_STRING *wrap_str = NULL;
 	ASN1_OCTET_STRING *ukm;
 	unsigned char *penc = NULL;
 	int penclen;
-	int ecdh_nid, kdf_type, kdf_nid, wrap_nid;
+	int ecdh_nid, kdf_nid, wrap_nid;
 	const EVP_MD *kdf_md;
-	int rv = 0;
+	int ret = 0;
 
-	pctx = CMS_RecipientInfo_get0_pkey_ctx(ri);
-	if (!pctx)
-		return 0;
-	/* Get ephemeral key */
-	pkey = EVP_PKEY_CTX_get0_pkey(pctx);
+	if ((pctx = CMS_RecipientInfo_get0_pkey_ctx(ri)) == NULL)
+		goto err;
 	if (!CMS_RecipientInfo_kari_get0_orig_id(ri, &talg, &pubkey,
 	    NULL, NULL, NULL))
 		goto err;
+
 	X509_ALGOR_get0(&aoid, NULL, NULL, talg);
-
-	/* Is everything uninitialised? */
 	if (aoid == OBJ_nid2obj(NID_undef)) {
-		EC_KEY *eckey = pkey->pkey.ec;
-		unsigned char *p;
+		EVP_PKEY *pkey;
 
-		/* Set the key */
-		penclen = i2o_ECPublicKey(eckey, NULL);
-		if (penclen <= 0)
+		if ((pkey = EVP_PKEY_CTX_get0_pkey(pctx)) == NULL)
 			goto err;
-		penc = malloc(penclen);
-		if (penc == NULL)
+
+		penc = NULL;
+		if ((penclen = i2o_ECPublicKey(pkey->pkey.ec, &penc)) <= 0)
 			goto err;
-		p = penc;
-		penclen = i2o_ECPublicKey(eckey, &p);
-		if (penclen <= 0)
-			goto err;
+
 		ASN1_STRING_set0(pubkey, penc, penclen);
-		if (!asn1_abs_set_unused_bits(pubkey, 0))
-			goto err;
 		penc = NULL;
 
-		X509_ALGOR_set0(talg, OBJ_nid2obj(NID_X9_62_id_ecPublicKey),
-		    V_ASN1_UNDEF, NULL);
+		if (!asn1_abs_set_unused_bits(pubkey, 0))
+			goto err;
+
+		if (!X509_ALGOR_set0_by_nid(talg, NID_X9_62_id_ecPublicKey,
+		    V_ASN1_UNDEF, NULL))
+			goto err;
 	}
 
-	/* See if custom parameters set */
-	kdf_type = EVP_PKEY_CTX_get_ecdh_kdf_type(pctx);
-	if (kdf_type <= 0)
+	if (EVP_PKEY_CTX_get_ecdh_kdf_type(pctx) != EVP_PKEY_ECDH_KDF_NONE)
 		goto err;
-	if (!EVP_PKEY_CTX_get_ecdh_kdf_md(pctx, &kdf_md))
+	if (EVP_PKEY_CTX_set_ecdh_kdf_type(pctx, EVP_PKEY_ECDH_KDF_X9_63) <= 0)
 		goto err;
-	ecdh_nid = EVP_PKEY_CTX_get_ecdh_cofactor_mode(pctx);
-	if (ecdh_nid < 0)
+
+	if ((ecdh_nid = EVP_PKEY_CTX_get_ecdh_cofactor_mode(pctx)) < 0)
 		goto err;
-	else if (ecdh_nid == 0)
+	if (ecdh_nid == 0)
 		ecdh_nid = NID_dh_std_kdf;
 	else if (ecdh_nid == 1)
 		ecdh_nid = NID_dh_cofactor_kdf;
 
-	if (kdf_type == EVP_PKEY_ECDH_KDF_NONE) {
-		kdf_type = EVP_PKEY_ECDH_KDF_X9_63;
-		if (EVP_PKEY_CTX_set_ecdh_kdf_type(pctx, kdf_type) <= 0)
-			goto err;
-	} else {
-		/* Unknown KDF */
+	if (!EVP_PKEY_CTX_get_ecdh_kdf_md(pctx, &kdf_md))
 		goto err;
-	}
 	if (kdf_md == NULL) {
 		/* Fixme later for better MD */
 		kdf_md = EVP_sha1();
@@ -997,53 +986,60 @@ ecdh_cms_encrypt(CMS_RecipientInfo *ri)
 	wrap_nid = EVP_CIPHER_CTX_type(ctx);
 	keylen = EVP_CIPHER_CTX_key_length(ctx);
 
-	/* Package wrap algorithm in an AlgorithmIdentifier */
+	/*
+	 * Package wrap algorithm in an AlgorithmIdentifier.
+	 *
+	 * Incompatibility of X509_ALGOR_set0() with EVP_CIPHER_param_to_asn1()
+	 * makes this really gross.
+	 */
 
-	wrap_alg = X509_ALGOR_new();
-	if (wrap_alg == NULL)
+	if ((wrap_alg = X509_ALGOR_new()) == NULL)
 		goto err;
-	wrap_alg->algorithm = OBJ_nid2obj(wrap_nid);
-	wrap_alg->parameter = ASN1_TYPE_new();
-	if (wrap_alg->parameter == NULL)
+	if ((wrap_alg->algorithm = OBJ_nid2obj(wrap_nid)) == NULL)
+		goto err;
+	if ((wrap_alg->parameter = ASN1_TYPE_new()) == NULL)
 		goto err;
 	if (EVP_CIPHER_param_to_asn1(ctx, wrap_alg->parameter) <= 0)
 		goto err;
-	if (ASN1_TYPE_get(wrap_alg->parameter) == NID_undef) {
+	if (ASN1_TYPE_get(wrap_alg->parameter) == V_ASN1_UNDEF) {
 		ASN1_TYPE_free(wrap_alg->parameter);
 		wrap_alg->parameter = NULL;
 	}
 
+	if ((penclen = CMS_SharedInfo_encode(&penc, wrap_alg, ukm, keylen)) <= 0)
+		goto err;
+
 	if (EVP_PKEY_CTX_set_ecdh_kdf_outlen(pctx, keylen) <= 0)
 		goto err;
-
-	penclen = CMS_SharedInfo_encode(&penc, wrap_alg, ukm, keylen);
-	if (penclen <= 0)
-		goto err;
-
 	if (EVP_PKEY_CTX_set0_ecdh_kdf_ukm(pctx, penc, penclen) <= 0)
 		goto err;
 	penc = NULL;
 
 	/*
-	 * Now need to wrap encoding of wrap AlgorithmIdentifier into parameter
-	 * of another AlgorithmIdentifier.
+	 * Wrap encoded wrap AlgorithmIdentifier into parameter of another
+	 * AlgorithmIdentifier.
 	 */
-	penclen = i2d_X509_ALGOR(wrap_alg, &penc);
-	if (penclen <= 0)
+
+	if ((penclen = i2d_X509_ALGOR(wrap_alg, &penc)) <= 0)
 		goto err;
-	wrap_str = ASN1_STRING_new();
-	if (wrap_str == NULL)
+
+	if ((wrap_str = ASN1_STRING_new()) == NULL)
 		goto err;
 	ASN1_STRING_set0(wrap_str, penc, penclen);
 	penc = NULL;
-	X509_ALGOR_set0(talg, OBJ_nid2obj(kdf_nid), V_ASN1_SEQUENCE, wrap_str);
 
-	rv = 1;
+	if (!X509_ALGOR_set0_by_nid(talg, kdf_nid, V_ASN1_SEQUENCE, wrap_str))
+		goto err;
+	wrap_str = NULL;
+
+	ret = 1;
 
  err:
 	free(penc);
+	ASN1_STRING_free(wrap_str);
 	X509_ALGOR_free(wrap_alg);
-	return rv;
+
+	return ret;
 }
 
 #endif

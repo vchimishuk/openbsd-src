@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.254 2024/03/01 09:36:55 job Exp $ */
+/*	$OpenBSD: main.c,v 1.257 2024/04/08 14:02:13 tb Exp $ */
 /*
  * Copyright (c) 2021 Claudio Jeker <claudio@openbsd.org>
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
@@ -433,7 +433,7 @@ queue_add_file(const char *file, enum rtype type, int talid)
 	char		*nfile;
 	size_t		 len = 0;
 
-	if (!filemode || strncmp(file, "rsync://", strlen("rsync://")) != 0) {
+	if (!filemode || strncmp(file, RSYNC_PROTO, RSYNC_PROTO_LEN) != 0) {
 		buf = load_file(file, &len);
 		if (buf == NULL)
 			err(1, "%s", file);
@@ -494,7 +494,7 @@ queue_add_from_cert(const struct cert *cert)
 	size_t			 repourisz;
 	int			 shortlisted = 0;
 
-	if (strncmp(cert->repo, "rsync://", 8) != 0)
+	if (strncmp(cert->repo, RSYNC_PROTO, RSYNC_PROTO_LEN) != 0)
 		errx(1, "unexpected protocol");
 	host = cert->repo + 8;
 
@@ -664,7 +664,7 @@ entity_process(struct ibuf *b, struct stats *st, struct vrp_tree *tree,
 		}
 		aspa = aspa_read(b);
 		if (aspa->valid)
-			aspa_insert_vaps(vaptree, aspa, rp);
+			aspa_insert_vaps(file, vaptree, aspa, rp);
 		else
 			repo_stat_inc(rp, talid, type, STYPE_INVALID);
 		aspa_free(aspa);
@@ -773,6 +773,7 @@ sum_stats(const struct repo *rp, const struct repotalstats *in, void *arg)
 	out->vaps += in->vaps;
 	out->vaps_uniqs += in->vaps_uniqs;
 	out->vaps_pas += in->vaps_pas;
+	out->vaps_overflowed += in->vaps_overflowed;
 	out->spls += in->spls;
 	out->spls_fail += in->spls_fail;
 	out->spls_invalid += in->spls_invalid;
@@ -1502,8 +1503,9 @@ main(int argc, char *argv[])
 	    stats.repo_stats.extra_files, stats.repo_stats.del_extra_files);
 	printf("VRP Entries: %u (%u unique)\n", stats.repo_tal_stats.vrps,
 	    stats.repo_tal_stats.vrps_uniqs);
-	printf("VAP Entries: %u (%u unique)\n", stats.repo_tal_stats.vaps,
-	    stats.repo_tal_stats.vaps_uniqs);
+	printf("VAP Entries: %u (%u unique, %u overflowed)\n",
+	    stats.repo_tal_stats.vaps, stats.repo_tal_stats.vaps_uniqs,
+	    stats.repo_tal_stats.vaps_overflowed);
 	printf("VSP Entries: %u (%u unique)\n", stats.repo_tal_stats.vsps,
 	    stats.repo_tal_stats.vsps_uniqs);
 
