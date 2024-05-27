@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_vmx.c,v 1.83 2024/04/02 20:59:48 jan Exp $	*/
+/*	$OpenBSD: if_vmx.c,v 1.86 2024/05/21 19:49:06 jan Exp $	*/
 
 /*
  * Copyright (c) 2013 Tsubai Masanari
@@ -203,14 +203,12 @@ void vmxnet3_rxintr(struct vmxnet3_softc *, struct vmxnet3_rxqueue *);
 void vmxnet3_rxfill_tick(void *);
 void vmxnet3_rxfill(struct vmxnet3_rxring *);
 void vmxnet3_iff(struct vmxnet3_softc *);
-void vmxnet3_rx_csum(struct vmxnet3_rxcompdesc *, struct mbuf *);
+void vmxnet3_rx_offload(struct vmxnet3_rxcompdesc *, struct mbuf *);
 void vmxnet3_stop(struct ifnet *);
 void vmxnet3_reset(struct vmxnet3_softc *);
 int vmxnet3_init(struct vmxnet3_softc *);
 int vmxnet3_ioctl(struct ifnet *, u_long, caddr_t);
 void vmxnet3_start(struct ifqueue *);
-int vmxnet3_load_mbuf(struct vmxnet3_softc *, struct vmxnet3_txring *,
-    struct mbuf **);
 void vmxnet3_watchdog(struct ifnet *);
 void vmxnet3_media_status(struct ifnet *, struct ifmediareq *);
 int vmxnet3_media_change(struct ifnet *);
@@ -1129,14 +1127,8 @@ vmxnet3_rxintr(struct vmxnet3_softc *sc, struct vmxnet3_rxqueue *rq)
 		}
 		m->m_pkthdr.len = m->m_len = len;
 
-		vmxnet3_rx_csum(rxcd, m);
-#if NVLAN > 0
-		if (letoh32(rxcd->rxc_word2 & VMXNET3_RXC_VLAN)) {
-			m->m_flags |= M_VLANTAG;
-			m->m_pkthdr.ether_vtag = letoh32((rxcd->rxc_word2 >>
-			    VMXNET3_RXC_VLANTAG_S) & VMXNET3_RXC_VLANTAG_M);
-		}
-#endif
+		vmxnet3_rx_offload(rxcd, m);
+
 		if (((letoh32(rxcd->rxc_word0) >> VMXNET3_RXC_RSSTYPE_S) &
 		    VMXNET3_RXC_RSSTYPE_M) != VMXNET3_RXC_RSSTYPE_NONE) {
 			m->m_pkthdr.ph_flowid = letoh32(rxcd->rxc_word1);
@@ -1217,22 +1209,39 @@ vmxnet3_iff(struct vmxnet3_softc *sc)
 
 
 void
-vmxnet3_rx_csum(struct vmxnet3_rxcompdesc *rxcd, struct mbuf *m)
+vmxnet3_rx_offload(struct vmxnet3_rxcompdesc *rxcd, struct mbuf *m)
 {
-	if (letoh32(rxcd->rxc_word0 & VMXNET3_RXC_NOCSUM))
+	/*
+	 * VLAN Offload
+	 */
+
+#if NVLAN > 0
+	if (ISSET(rxcd->rxc_word2, VMXNET3_RXC_VLAN)) {
+		SET(m->m_flags, M_VLANTAG);
+		m->m_pkthdr.ether_vtag = letoh32((rxcd->rxc_word2 >>
+		    VMXNET3_RXC_VLANTAG_S) & VMXNET3_RXC_VLANTAG_M);
+	}
+#endif
+
+	/*
+	 * Checksum Offload
+	 */
+
+	if (ISSET(rxcd->rxc_word0, VMXNET3_RXC_NOCSUM))
 		return;
 
-	if ((rxcd->rxc_word3 & (VMXNET3_RXC_IPV4 | VMXNET3_RXC_IPSUM_OK)) ==
-	    (VMXNET3_RXC_IPV4 | VMXNET3_RXC_IPSUM_OK))
-		m->m_pkthdr.csum_flags |= M_IPV4_CSUM_IN_OK;
+	if (ISSET(rxcd->rxc_word3, VMXNET3_RXC_IPV4) &&
+	    ISSET(rxcd->rxc_word3, VMXNET3_RXC_IPSUM_OK))
+		SET(m->m_pkthdr.csum_flags, M_IPV4_CSUM_IN_OK);
 
-	if (rxcd->rxc_word3 & VMXNET3_RXC_FRAGMENT)
+	if (ISSET(rxcd->rxc_word3, VMXNET3_RXC_FRAGMENT))
 		return;
 
-	if (rxcd->rxc_word3 & (VMXNET3_RXC_TCP | VMXNET3_RXC_UDP)) {
-		if (rxcd->rxc_word3 & VMXNET3_RXC_CSUM_OK)
-			m->m_pkthdr.csum_flags |=
-			    M_TCP_CSUM_IN_OK | M_UDP_CSUM_IN_OK;
+	if (ISSET(rxcd->rxc_word3, VMXNET3_RXC_CSUM_OK)) {
+		if (ISSET(rxcd->rxc_word3, VMXNET3_RXC_TCP))
+			SET(m->m_pkthdr.csum_flags, M_TCP_CSUM_IN_OK);
+		else if (ISSET(rxcd->rxc_word3, VMXNET3_RXC_UDP))
+			SET(m->m_pkthdr.csum_flags, M_UDP_CSUM_IN_OK);
 	}
 }
 
@@ -1463,7 +1472,7 @@ vmxnet3_tx_offload(struct vmxnet3_txdesc *sop, struct mbuf *m)
 	 * TCP Segmentation Offload
 	 */
 
-	if (ext.tcp == NULL) {
+	if (ext.tcp == NULL || m->m_pkthdr.ph_mss == 0) {
 		tcpstat_inc(tcps_outbadtso);
 		return;
 	}

@@ -1,4 +1,4 @@
-/*	$OpenBSD: uvm_page.c,v 1.175 2024/04/17 13:12:58 mpi Exp $	*/
+/*	$OpenBSD: uvm_page.c,v 1.177 2024/05/01 12:54:27 mpi Exp $	*/
 /*	$NetBSD: uvm_page.c,v 1.44 2000/11/27 08:40:04 chs Exp $	*/
 
 /*

@@ -1,4 +1,4 @@
-/* $OpenBSD: tmux.h,v 1.1214 2024/04/10 07:36:25 nicm Exp $ */
+/* $OpenBSD: tmux.h,v 1.1217 2024/05/19 03:27:58 jsg Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -2062,6 +2062,7 @@ extern int		 ptm_fd;
 extern const char	*shell_command;
 int		 checkshell(const char *);
 void		 setblocking(int, int);
+char 		*shell_argv0(const char *, int);
 uint64_t	 get_timer(void);
 const char	*sig2name(int);
 const char	*find_cwd(void);
@@ -2351,7 +2352,6 @@ void	tty_cmd_clearstartofscreen(struct tty *, const struct tty_ctx *);
 void	tty_cmd_deletecharacter(struct tty *, const struct tty_ctx *);
 void	tty_cmd_clearcharacter(struct tty *, const struct tty_ctx *);
 void	tty_cmd_deleteline(struct tty *, const struct tty_ctx *);
-void	tty_cmd_erasecharacter(struct tty *, const struct tty_ctx *);
 void	tty_cmd_insertcharacter(struct tty *, const struct tty_ctx *);
 void	tty_cmd_insertline(struct tty *, const struct tty_ctx *);
 void	tty_cmd_linefeed(struct tty *, const struct tty_ctx *);
@@ -2523,7 +2523,6 @@ enum cmd_retval	 cmd_attach_session(struct cmdq_item *, const char *, int, int,
 		     int, const char *, int, const char *);
 
 /* cmd-parse.c */
-void		 cmd_parse_empty(struct cmd_parse_input *);
 struct cmd_parse_result *cmd_parse_from_file(FILE *, struct cmd_parse_input *);
 struct cmd_parse_result *cmd_parse_from_string(const char *,
 		     struct cmd_parse_input *);
@@ -2683,8 +2682,6 @@ void	 server_client_suspend(struct client *);
 void	 server_client_detach(struct client *, enum msgtype);
 void	 server_client_exec(struct client *, const char *);
 void	 server_client_loop(void);
-void	 server_client_push_stdout(struct client *);
-void	 server_client_push_stderr(struct client *);
 const char *server_client_get_cwd(struct client *, struct session *);
 void	 server_client_set_flags(struct client *, const char *);
 const char *server_client_get_flags(struct client *);
@@ -3210,8 +3207,6 @@ void	control_add_sub(struct client *, const char *, enum control_sub_type,
 void	control_remove_sub(struct client *, const char *);
 
 /* control-notify.c */
-void	control_notify_input(struct client *, struct window_pane *,
-	    const u_char *, size_t);
 void	control_notify_pane_mode_changed(int);
 void	control_notify_window_layout_changed(struct window *);
 void	control_notify_window_pane_changed(struct window *);
@@ -3245,8 +3240,6 @@ char		*session_check_name(const char *);
 void		 session_update_activity(struct session *, struct timeval *);
 struct session	*session_next_session(struct session *);
 struct session	*session_previous_session(struct session *);
-struct winlink	*session_new(struct session *, const char *, int, char **,
-		     const char *, const char *, int, char **);
 struct winlink	*session_attach(struct session *, struct window *, int,
 		     char **);
 int		 session_detach(struct session *, struct winlink *);

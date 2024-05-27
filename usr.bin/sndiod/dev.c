@@ -1,4 +1,4 @@
-/*	$OpenBSD: dev.c,v 1.108 2024/04/02 05:21:32 ratchov Exp $	*/
+/*	$OpenBSD: dev.c,v 1.116 2024/05/24 15:21:35 ratchov Exp $	*/
 /*
  * Copyright (c) 2008-2012 Alexandre Ratchov <alex@caoua.org>
  *
@@ -41,8 +41,6 @@ void dev_sub_bcopy(struct dev *, struct slot *);
 void dev_onmove(struct dev *, int);
 void dev_master(struct dev *, unsigned int);
 void dev_cycle(struct dev *);
-struct dev *dev_new(char *, struct aparams *, unsigned int, unsigned int,
-    unsigned int, unsigned int, unsigned int, unsigned int);
 void dev_adjpar(struct dev *, int, int, int);
 int dev_allocbufs(struct dev *);
 void dev_freebufs(struct dev *);
@@ -519,7 +517,8 @@ dev_mix_badd(struct dev *d, struct slot *s)
 	}
 
 	if (s->mix.resampbuf) {
-		resamp_do(&s->mix.resamp, in, s->mix.resampbuf, s->round);
+		resamp_do(&s->mix.resamp,
+		    in, s->mix.resampbuf, s->round, d->round);
 		in = s->mix.resampbuf;
 	}
 
@@ -656,7 +655,7 @@ dev_sub_bcopy(struct dev *d, struct slot *s)
 
 	if (s->sub.resampbuf) {
 		resamp_do(&s->sub.resamp,
-		    s->sub.resampbuf, resamp_out, d->round);
+		    s->sub.resampbuf, resamp_out, d->round, s->round);
 	}
 
 	if (s->sub.encbuf)
@@ -1055,6 +1054,8 @@ dev_allocbufs(struct dev *d)
 int
 dev_open(struct dev *d)
 {
+	struct opt *o;
+
 	d->mode = d->reqmode;
 	d->round = d->reqround;
 	d->bufsz = d->reqbufsz;
@@ -1077,6 +1078,18 @@ dev_open(struct dev *d)
 		return 0;
 
 	d->pstate = DEV_INIT;
+
+	/* add server.device if device is opened after opt_ref() call */
+	for (o = opt_list; o != NULL; o = o->next) {
+		if (o->refcnt > 0 && !ctl_find(CTL_OPT_DEV, o, d)) {
+			ctl_new(CTL_OPT_DEV, o, d,
+			    CTL_SEL, dev_getdisplay(d),
+			    o->name, "server", -1, "device",
+			    d->name, -1, 1, o->dev == d);
+			d->refcnt++;
+		}
+	}
+
 	return 1;
 }
 
@@ -1151,6 +1164,14 @@ dev_freebufs(struct dev *d)
 void
 dev_close(struct dev *d)
 {
+	struct opt *o;
+
+	/* remove server.device entries */
+	for (o = opt_list; o != NULL; o = o->next) {
+		if (ctl_del(CTL_OPT_DEV, o, d))
+			d->refcnt--;
+	}
+
 	d->pstate = DEV_CFG;
 	dev_sio_close(d);
 	dev_freebufs(d);
@@ -1777,7 +1798,7 @@ slot_new(struct opt *opt, unsigned int id, char *who,
 	s->opt = opt;
 	slot_ctlname(s, ctl_name, CTL_NAMEMAX);
 	ctl_new(CTL_SLOT_LEVEL, s, NULL,
-	    CTL_NUM, "app", ctl_name, -1, "level",
+	    CTL_NUM, "", "app", ctl_name, -1, "level",
 	    NULL, -1, 127, s->vol);
 
 found:
@@ -2291,6 +2312,14 @@ ctlslot_visible(struct ctlslot *s, struct ctl *c)
 		return 1;
 	switch (c->scope) {
 	case CTL_HW:
+		/*
+		 * Disable hardware's server.device control as its
+		 * replaced by sndiod's one
+		 */
+		if (strcmp(c->node0.name, "server") == 0 &&
+		    strcmp(c->func, "device") == 0)
+			return 0;
+		/* FALLTHROUHG */
 	case CTL_DEV_MASTER:
 		return (s->opt->dev == c->u.any.arg0);
 	case CTL_OPT_DEV:
@@ -2340,6 +2369,8 @@ ctlslot_update(struct ctlslot *s)
 		/* if control is hidden */
 		c->desc_mask |= s->self;
 	}
+	if (s->ops)
+		s->ops->sync(s->arg);
 }
 
 void
@@ -2404,6 +2435,11 @@ ctl_log(struct ctl *c)
 	default:
 		log_puts("unknown");
 	}
+	if (c->display[0] != 0) {
+		log_puts(" (");
+		log_puts(c->display);
+		log_puts(")");
+	}
 }
 
 int
@@ -2449,8 +2485,8 @@ ctl_setval(struct ctl *c, int val)
 		c->curval = val;
 		return 1;
 	case CTL_OPT_DEV:
-		c->u.opt_dev.opt->alt_first = c->u.opt_dev.dev;
-		opt_setdev(c->u.opt_dev.opt, c->u.opt_dev.dev);
+		if (opt_setdev(c->u.opt_dev.opt, c->u.opt_dev.dev))
+			c->u.opt_dev.opt->alt_first = c->u.opt_dev.dev;
 		return 1;
 	default:
 		if (log_level >= 2) {
@@ -2466,7 +2502,7 @@ ctl_setval(struct ctl *c, int val)
  */
 struct ctl *
 ctl_new(int scope, void *arg0, void *arg1,
-    int type, char *gstr,
+    int type, char *display, char *gstr,
     char *str0, int unit0, char *func,
     char *str1, int unit1, int maxval, int val)
 {
@@ -2490,6 +2526,7 @@ ctl_new(int scope, void *arg0, void *arg1,
 	c->type = type;
 	strlcpy(c->func, func, CTL_NAMEMAX);
 	strlcpy(c->group, gstr, CTL_NAMEMAX);
+	strlcpy(c->display, display, CTL_DISPLAYMAX);
 	strlcpy(c->node0.name, str0, CTL_NAMEMAX);
 	c->node0.unit = unit0;
 	if (c->type == CTL_VEC || c->type == CTL_LIST || c->type == CTL_SEL) {
@@ -2553,6 +2590,7 @@ ctl_update(struct ctl *c)
 			c->refs_mask |= s->self;
 		/* if control is hidden */
 		c->desc_mask |= s->self;
+		s->ops->sync(s->arg);
 	}
 }
 
@@ -2601,16 +2639,18 @@ ctl_onval(int scope, void *arg0, void *arg1, int val)
 	return 1;
 }
 
-void
+int
 ctl_del(int scope, void *arg0, void *arg1)
 {
 	struct ctl *c, **pc;
+	int found;
 
+	found = 0;
 	pc = &ctl_list;
 	for (;;) {
 		c = *pc;
 		if (c == NULL)
-			return;
+			return found;
 		if (ctl_match(c, scope, arg0, arg1)) {
 #ifdef DEBUG
 			if (log_level >= 2) {
@@ -2618,6 +2658,7 @@ ctl_del(int scope, void *arg0, void *arg1)
 				log_puts(": removed\n");
 			}
 #endif
+			found++;
 			c->refs_mask &= ~CTL_DEVMASK;
 			if (c->refs_mask == 0) {
 				*pc = c->next;
@@ -2631,11 +2672,32 @@ ctl_del(int scope, void *arg0, void *arg1)
 	}
 }
 
+char *
+dev_getdisplay(struct dev *d)
+{
+	struct ctl *c;
+	char *display;
+
+	display = "";
+	for (c = ctl_list; c != NULL; c = c->next) {
+		if (c->scope == CTL_HW &&
+		    c->u.hw.dev == d &&
+		    c->type == CTL_SEL &&
+		    strcmp(c->group, d->name) == 0 &&
+		    strcmp(c->node0.name, "server") == 0 &&
+		    strcmp(c->func, "device") == 0 &&
+		    c->curval == 1)
+			display = c->display;
+	}
+	return display;
+}
+
 void
 dev_ctlsync(struct dev *d)
 {
 	struct ctl *c;
 	struct ctlslot *s;
+	const char *display;
 	int found, i;
 
 	found = 0;
@@ -2663,8 +2725,21 @@ dev_ctlsync(struct dev *d)
 		}
 		d->master_enabled = 1;
 		ctl_new(CTL_DEV_MASTER, d, NULL,
-		    CTL_NUM, d->name, "output", -1, "level",
+		    CTL_NUM, "", d->name, "output", -1, "level",
 		    NULL, -1, 127, d->master);
+	}
+
+	/*
+	 * if the hardware's server.device changed, update the display name
+	 */
+	display = dev_getdisplay(d);
+	for (c = ctl_list; c != NULL; c = c->next) {
+		if (c->scope != CTL_OPT_DEV ||
+		    c->u.opt_dev.dev != d ||
+		    strcmp(c->display, display) == 0)
+			continue;
+		strlcpy(c->display, display, CTL_DISPLAYMAX);
+		c->desc_mask = ~0;
 	}
 
 	for (s = ctlslot_array, i = 0; i < DEV_NCTLSLOT; i++, s++) {

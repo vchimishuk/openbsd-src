@@ -1,4 +1,4 @@
-/*	$OpenBSD: machdep.c,v 1.216 2024/03/29 21:29:34 miod Exp $	*/
+/*	$OpenBSD: machdep.c,v 1.218 2024/05/22 05:51:49 jsg Exp $	*/
 /*	$NetBSD: machdep.c,v 1.108 2001/07/24 19:30:14 eeh Exp $ */
 
 /*-
@@ -139,11 +139,6 @@ void    _bus_dmamem_unmap(bus_dma_tag_t tag, bus_dma_tag_t, caddr_t kva,
 paddr_t _bus_dmamem_mmap(bus_dma_tag_t tag, bus_dma_tag_t,
 	    bus_dma_segment_t *segs, int nsegs, off_t off, int prot, int flags);
 
-int     _bus_dmamem_alloc_range(bus_dma_tag_t tag, bus_dma_tag_t,
-	    bus_size_t size, bus_size_t alignment, bus_size_t boundary,
-            bus_dma_segment_t *segs, int nsegs, int *rsegs, int flags,
-            vaddr_t low, vaddr_t high);
-
 /*
  * The "bus_space_debug" flags used by macros elsewhere.
  * A good set of flags to use when first debugging something is:
@@ -158,7 +153,6 @@ struct uvm_constraint_range  dma_constraint = { 0x0, (paddr_t)-1 };
 struct uvm_constraint_range *uvm_md_constraints[] = { NULL };
 
 int	physmem;
-extern	caddr_t msgbufaddr;
 
 int sparc_led_blink = 1;
 

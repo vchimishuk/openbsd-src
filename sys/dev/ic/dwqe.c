@@ -1,4 +1,4 @@
-/*	$OpenBSD: dwqe.c,v 1.18 2024/03/29 08:19:40 stsp Exp $	*/
+/*	$OpenBSD: dwqe.c,v 1.21 2024/05/06 09:54:38 stsp Exp $	*/
 /*
  * Copyright (c) 2008, 2019 Mark Kettenis <kettenis@openbsd.org>
  * Copyright (c) 2017, 2022 Patrick Wildt <patrick@blueri.se>
@@ -94,6 +94,12 @@ struct mbuf *dwqe_alloc_mbuf(struct dwqe_softc *, bus_dmamap_t);
 void	dwqe_fill_rx_ring(struct dwqe_softc *);
 
 int
+dwqe_have_tx_csum_offload(struct dwqe_softc *sc)
+{
+	return (sc->sc_hw_feature[0] & GMAC_MAC_HW_FEATURE0_TXCOESEL);
+}
+
+int
 dwqe_attach(struct dwqe_softc *sc)
 {
 	struct ifnet *ifp;
@@ -121,6 +127,11 @@ dwqe_attach(struct dwqe_softc *sc)
 	bcopy(sc->sc_dev.dv_xname, ifp->if_xname, IFNAMSIZ);
 
 	ifp->if_capabilities = IFCAP_VLAN_MTU;
+	if (dwqe_have_tx_csum_offload(sc)) {
+		ifp->if_capabilities |= (IFCAP_CSUM_IPv4 |
+		    IFCAP_CSUM_TCPv4 | IFCAP_CSUM_UDPv4 |
+		    IFCAP_CSUM_TCPv6 | IFCAP_CSUM_UDPv6);
+	}
 
 	sc->sc_mii.mii_ifp = ifp;
 	sc->sc_mii.mii_readreg = dwqe_mii_readreg;
@@ -213,6 +224,8 @@ dwqe_attach(struct dwqe_softc *sc)
 	/* Disable interrupts. */
 	dwqe_write(sc, GMAC_INT_EN, 0);
 	dwqe_write(sc, GMAC_CHAN_INTR_ENA(0), 0);
+	dwqe_write(sc, GMAC_MMC_RX_INT_MASK, 0xffffffff); 
+	dwqe_write(sc, GMAC_MMC_TX_INT_MASK, 0xffffffff); 
 
 	return 0;
 }
@@ -641,6 +654,66 @@ dwqe_tx_proc(struct dwqe_softc *sc)
 	}
 }
 
+int
+dwqe_have_rx_csum_offload(struct dwqe_softc *sc)
+{
+	return (sc->sc_hw_feature[0] & GMAC_MAC_HW_FEATURE0_RXCOESEL);
+}
+
+void
+dwqe_rx_csum(struct dwqe_softc *sc, struct mbuf *m, struct dwqe_desc *rxd)
+{
+	uint16_t csum_flags = 0;
+
+	/*
+	 * Checksum offload must be supported, the Last-Descriptor bit
+	 * must be set, RDES1 must be valid, and checksumming must not
+	 * have been bypassed (happens for unknown packet types), and
+	 * an IP header must have been detected.
+	 */
+	if (!dwqe_have_rx_csum_offload(sc) ||
+	    (rxd->sd_tdes3 & RDES3_LD) == 0 ||
+	    (rxd->sd_tdes3 & RDES3_RDES1_VALID) == 0 ||
+	    (rxd->sd_tdes1 & RDES1_IP_CSUM_BYPASS) ||
+	    (rxd->sd_tdes1 & (RDES1_IPV4_HDR | RDES1_IPV6_HDR)) == 0)
+		return;
+
+	/* If the IP header checksum is invalid then the payload is ignored. */
+	if (rxd->sd_tdes1 & RDES1_IP_HDR_ERROR) {
+		if (rxd->sd_tdes1 & RDES1_IPV4_HDR)
+			csum_flags |= M_IPV4_CSUM_IN_BAD;
+	} else {
+		if (rxd->sd_tdes1 & RDES1_IPV4_HDR)
+			csum_flags |= M_IPV4_CSUM_IN_OK;
+
+		/* Detect payload type and corresponding checksum errors. */
+		switch (rxd->sd_tdes1 & RDES1_IP_PAYLOAD_TYPE) {
+		case RDES1_IP_PAYLOAD_UDP:
+			if (rxd->sd_tdes1 & RDES1_IP_PAYLOAD_ERROR)
+				csum_flags |= M_UDP_CSUM_IN_BAD;
+			else
+				csum_flags |= M_UDP_CSUM_IN_OK;
+			break;
+		case RDES1_IP_PAYLOAD_TCP:
+			if (rxd->sd_tdes1 & RDES1_IP_PAYLOAD_ERROR)
+				csum_flags |= M_TCP_CSUM_IN_BAD;
+			else
+				csum_flags |= M_TCP_CSUM_IN_OK;
+			break;
+		case RDES1_IP_PAYLOAD_ICMP:
+			if (rxd->sd_tdes1 & RDES1_IP_PAYLOAD_ERROR)
+				csum_flags |= M_ICMP_CSUM_IN_BAD;
+			else
+				csum_flags |= M_ICMP_CSUM_IN_OK;
+			break;
+		default:
+			break;
+		}
+	}
+
+	m->m_pkthdr.csum_flags |= csum_flags;
+}
+
 void
 dwqe_rx_proc(struct dwqe_softc *sc)
 {
@@ -689,6 +762,7 @@ dwqe_rx_proc(struct dwqe_softc *sc)
 
 			m->m_pkthdr.len = m->m_len = len;
 
+			dwqe_rx_csum(sc, m, rxd);
 			ml_enqueue(&ml, m);
 		}
 
@@ -864,6 +938,12 @@ dwqe_up(struct dwqe_softc *sc)
 
 	if (!sc->sc_fixed_link)
 		timeout_add_sec(&sc->sc_phy_tick, 1);
+
+	if (dwqe_have_rx_csum_offload(sc)) {
+		reg = dwqe_read(sc, GMAC_MAC_CONF);
+		reg |= GMAC_MAC_CONF_IPC;
+		dwqe_write(sc, GMAC_MAC_CONF, reg);
+	}
 }
 
 void
@@ -1008,6 +1088,25 @@ dwqe_iff(struct dwqe_softc *sc)
 	dwqe_write(sc, GMAC_MAC_PACKET_FILTER, reg);
 }
 
+void
+dwqe_tx_csum(struct dwqe_softc *sc, struct mbuf *m, struct dwqe_desc *txd)
+{
+	if (!dwqe_have_tx_csum_offload(sc))
+		return;
+
+	/* Checksum flags are valid only on first descriptor. */
+	if ((txd->sd_tdes3 & TDES3_FS) == 0)
+		return;
+
+	/* TSO and Tx checksum offloading are incompatible. */
+	if (txd->sd_tdes3 & TDES3_TSO_EN)
+		return;
+
+	if (m->m_pkthdr.csum_flags & (M_IPV4_CSUM_OUT |
+	    M_TCP_CSUM_OUT | M_UDP_CSUM_OUT))
+		txd->sd_tdes3 |= TDES3_CSUM_IPHDR_PAYLOAD_PSEUDOHDR;
+}
+
 int
 dwqe_encap(struct dwqe_softc *sc, struct mbuf *m, int *idx, int *used)
 {
@@ -1038,8 +1137,10 @@ dwqe_encap(struct dwqe_softc *sc, struct mbuf *m, int *idx, int *used)
 		txd->sd_tdes1 = (uint32_t)(map->dm_segs[i].ds_addr >> 32);
 		txd->sd_tdes2 = map->dm_segs[i].ds_len;
 		txd->sd_tdes3 = m->m_pkthdr.len;
-		if (i == 0)
+		if (i == 0) {
 			txd->sd_tdes3 |= TDES3_FS;
+			dwqe_tx_csum(sc, m, txd);
+		}
 		if (i == (map->dm_nsegs - 1)) {
 			txd->sd_tdes2 |= TDES2_IC;
 			txd->sd_tdes3 |= TDES3_LS;

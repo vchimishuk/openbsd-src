@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.h,v 1.166 2024/04/17 13:12:58 mpi Exp $	*/
+/*	$OpenBSD: cpu.h,v 1.170 2024/05/21 23:16:06 jsg Exp $	*/
 /*	$NetBSD: cpu.h,v 1.1 2003/04/26 18:39:39 fvdl Exp $	*/
 
 /*-
@@ -393,10 +393,6 @@ struct timeval;
 extern int cpu_feature;
 extern int cpu_ebxfeature;
 extern int cpu_ecxfeature;
-extern int cpu_perf_eax;
-extern int cpu_perf_ebx;
-extern int cpu_perf_edx;
-extern int cpu_apmi_edx;
 extern int ecpu_ecxfeature;
 extern int cpu_id;
 extern char cpu_vendor[];
@@ -432,7 +428,6 @@ void	lgdt(struct region_descriptor *);
 
 struct pcb;
 void	savectx(struct pcb *);
-void	switch_exit(struct proc *, void (*)(struct proc *));
 void	proc_trampoline(void);
 
 /* clock.c */

@@ -1,4 +1,4 @@
-/*	$OpenBSD: uchcom.c,v 1.34 2024/04/12 00:43:32 kevlo Exp $	*/
+/*	$OpenBSD: uchcom.c,v 1.36 2024/05/23 03:21:09 jsg Exp $	*/
 /*	$NetBSD: uchcom.c,v 1.1 2007/09/03 17:57:37 tshiozak Exp $	*/
 
 /*
@@ -31,12 +31,11 @@
  */
 
 /*
- * driver for WinChipHead CH343/341/340.
+ * driver for WinChipHead CH9102/343/341/340.
  */
 
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/tty.h>
 #include <sys/device.h>
@@ -46,7 +45,6 @@
 #include <dev/usb/usb.h>
 #include <dev/usb/usbdi.h>
 #include <dev/usb/usbdivar.h>
-#include <dev/usb/usbdi_util.h>
 #include <dev/usb/usbdevs.h>
 #include <dev/usb/ucomvar.h>
 
@@ -249,7 +247,8 @@ static const struct usb_devno uchcom_devs[] = {
 	{ USB_VENDOR_WCH, USB_PRODUCT_WCH_CH341 },
 	{ USB_VENDOR_WCH2, USB_PRODUCT_WCH2_CH340 },
 	{ USB_VENDOR_WCH2, USB_PRODUCT_WCH2_CH341A },
-	{ USB_VENDOR_WCH2, USB_PRODUCT_WCH2_CH343 }
+	{ USB_VENDOR_WCH2, USB_PRODUCT_WCH2_CH343 },
+	{ USB_VENDOR_WCH2, USB_PRODUCT_WCH2_CH9102 }
 };
 
 struct cfdriver uchcom_cd = {

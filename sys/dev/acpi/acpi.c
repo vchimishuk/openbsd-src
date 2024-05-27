@@ -1,4 +1,4 @@
-/* $OpenBSD: acpi.c,v 1.426 2024/01/08 19:52:29 kettenis Exp $ */
+/* $OpenBSD: acpi.c,v 1.428 2024/05/13 19:56:37 kettenis Exp $ */
 /*
  * Copyright (c) 2005 Thorsten Lockert <tholo@sigmasoft.com>
  * Copyright (c) 2005 Jordan Hargrave <jordan@openbsd.org>
@@ -106,8 +106,6 @@ void	acpi_create_thread(void *);
 void	acpi_init_pm(struct acpi_softc *);
 
 int	acpi_founddock(struct aml_node *, void *);
-int	acpi_foundpss(struct aml_node *, void *);
-int	acpi_foundtmp(struct aml_node *, void *);
 int	acpi_foundprw(struct aml_node *, void *);
 int	acpi_foundvideo(struct aml_node *, void *);
 int	acpi_foundsbs(struct aml_node *node, void *);
@@ -1965,6 +1963,12 @@ acpi_sleep_task(void *arg0, int sleepmode)
 
 #endif /* SMALL_KERNEL */
 
+int
+acpi_resuming(struct acpi_softc *sc)
+{
+	return (getuptime() < sc->sc_resume_time + 10);
+}
+
 void
 acpi_reset(void)
 {
@@ -2030,6 +2034,10 @@ acpi_pbtn_task(void *arg0, int dummy)
 	acpi_write_pmreg(sc, ACPIREG_PM1_EN,  0,
 	    en | ACPI_PM1_PWRBTN_EN);
 	splx(s);
+
+	/* Ignore button events if we're resuming. */
+	if (acpi_resuming(sc))
+		return;
 
 	switch (pwr_action) {
 	case 0:

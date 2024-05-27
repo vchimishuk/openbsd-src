@@ -1,4 +1,4 @@
-/* $OpenBSD: x509_lib.c,v 1.17 2024/03/02 10:35:32 tb Exp $ */
+/* $OpenBSD: x509_lib.c,v 1.20 2024/05/11 18:59:39 tb Exp $ */
 /* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 1999.
  */
@@ -161,13 +161,6 @@ X509V3_EXT_get(X509_EXTENSION *ext)
 }
 LCRYPTO_ALIAS(X509V3_EXT_get);
 
-int
-X509V3_add_standard_extensions(void)
-{
-	return 1;
-}
-LCRYPTO_ALIAS(X509V3_add_standard_extensions);
-
 /* Return an extension internal structure */
 
 void *
@@ -176,12 +169,11 @@ X509V3_EXT_d2i(X509_EXTENSION *ext)
 	const X509V3_EXT_METHOD *method;
 	const unsigned char *p;
 
-	if (!(method = X509V3_EXT_get(ext)))
+	if ((method = X509V3_EXT_get(ext)) == NULL)
 		return NULL;
 	p = ext->value->data;
-	if (method->it)
-		return ASN1_item_d2i(NULL, &p, ext->value->length,
-		    method->it);
+	if (method->it != NULL)
+		return ASN1_item_d2i(NULL, &p, ext->value->length, method->it);
 	return method->d2i(NULL, &p, ext->value->length);
 }
 LCRYPTO_ALIAS(X509V3_EXT_d2i);
@@ -333,3 +325,10 @@ err:
 	return 0;
 }
 LCRYPTO_ALIAS(X509V3_add1_i2d);
+
+int
+X509V3_add_standard_extensions(void)
+{
+	return 1;
+}
+LCRYPTO_ALIAS(X509V3_add_standard_extensions);

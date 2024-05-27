@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip6_var.h,v 1.115 2024/04/16 12:56:39 bluhm Exp $	*/
+/*	$OpenBSD: ip6_var.h,v 1.117 2024/05/13 01:15:53 jsg Exp $	*/
 /*	$KAME: ip6_var.h,v 1.33 2000/06/11 14:59:20 jinmei Exp $	*/
 
 /*
@@ -302,6 +302,7 @@ extern uint8_t	ip6_soiikey[IP6_SOIIKEY_LEN];
 extern const struct pr_usrreqs rip6_usrreqs;
 
 struct inpcb;
+struct ipsec_level;
 
 int	icmp6_ctloutput(int, struct socket *, int, int, struct mbuf *);
 
@@ -324,7 +325,7 @@ void	ip6_forward(struct mbuf *, struct route *, int);
 
 void	ip6_mloopback(struct ifnet *, struct mbuf *, struct sockaddr_in6 *);
 int	ip6_output(struct mbuf *, struct ip6_pktopts *, struct route *, int,
-	    struct ip6_moptions *, const u_char[]);
+	    struct ip6_moptions *, const struct ipsec_level *);
 int	ip6_fragment(struct mbuf *, struct mbuf_list *, int, u_char, u_long);
 int	ip6_ctloutput(int, struct socket *, int, int, struct mbuf *);
 int	ip6_raw_ctloutput(int, struct socket *, int, int, struct mbuf *);
@@ -363,7 +364,6 @@ int	rip6_send(struct socket *, struct mbuf *, struct mbuf *,
 int	rip6_sysctl(int *, u_int, void *, size_t *, void *, size_t);
 
 int	dest6_input(struct mbuf **, int *, int, int);
-int	none_input(struct mbuf **, int *, int);
 
 int	in6_pcbselsrc(const struct in6_addr **, struct sockaddr_in6 *,
 	    struct inpcb *, struct ip6_pktopts *);
@@ -376,7 +376,8 @@ u_int32_t ip6_randomflowlabel(void);
 
 #ifdef IPSEC
 struct tdb;
-int	ip6_output_ipsec_lookup(struct mbuf *, const u_char[], struct tdb **);
+int	ip6_output_ipsec_lookup(struct mbuf *, const struct ipsec_level *,
+	    struct tdb **);
 int	ip6_output_ipsec_send(struct tdb *, struct mbuf *, struct route *,
 	    int, int);
 #endif /* IPSEC */

@@ -1,4 +1,4 @@
-/*	$OpenBSD: resolver.c,v 1.164 2024/02/25 10:13:09 florian Exp $	*/
+/*	$OpenBSD: resolver.c,v 1.166 2024/05/21 05:00:48 jsg Exp $	*/
 
 
 /*
@@ -181,8 +181,6 @@ void			 show_status(pid_t);
 void			 show_autoconf(pid_t);
 void			 show_mem(pid_t);
 void			 send_resolver_info(struct uw_resolver *, pid_t);
-void			 send_detailed_resolver_info(struct uw_resolver *,
-			     pid_t);
 void			 trust_anchor_resolve(void);
 void			 trust_anchor_timo(int, short, void *);
 void			 trust_anchor_resolve_done(struct uw_resolver *, void *,
@@ -1211,6 +1209,7 @@ static const struct {
 	{ "target-fetch-policy:", "0 0 0 0 0" },
 	{ "outgoing-range:", "64" },
 	{ "val-max-restart:", "0" },
+	{ "infra-keep-probing", "yes" },
 };
 
 struct uw_resolver *

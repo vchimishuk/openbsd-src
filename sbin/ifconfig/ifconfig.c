@@ -1,4 +1,4 @@
-/*	$OpenBSD: ifconfig.c,v 1.470 2023/11/23 03:38:34 dlg Exp $	*/
+/*	$OpenBSD: ifconfig.c,v 1.472 2024/05/18 02:44:22 jsg Exp $	*/
 /*	$NetBSD: ifconfig.c,v 1.40 1997/10/01 02:19:43 enami Exp $	*/
 
 /*
@@ -710,8 +710,6 @@ void	init_current_media(void);
 void	process_join_commands(void);
 
 void	process_wg_commands(void);
-
-unsigned long get_ts_map(int, int, int);
 
 void	in_status(int);
 void	in_getaddr(const char *, int);
@@ -6313,7 +6311,7 @@ umb_pinop(int op, int is_puk, const char *pin, const char *newpin)
 	if (newpin) {
 		if ((mp.newpinlen = char_to_utf16(newpin, (uint16_t *)mp.newpin,
 		    sizeof (mp.newpin))) == -1)
-		errx(1, "new PIN too long");
+			errx(1, "new PIN too long");
 	}
 
 	if (ioctl(sock, SIOCSUMBPARAM, (caddr_t)&ifr) == -1)

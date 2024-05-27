@@ -1,4 +1,4 @@
-/*	$OpenBSD: options.c,v 1.113 2024/04/17 10:19:17 jca Exp $	*/
+/*	$OpenBSD: options.c,v 1.115 2024/05/10 20:28:31 millert Exp $	*/
 /*	$NetBSD: options.c,v 1.6 1996/03/26 23:54:18 mrg Exp $	*/
 
 /*-
@@ -230,7 +230,7 @@ FSUB fsub[] = {
 /* 10: POSIX PAX */
 	{"pax", 5120, BLKMULT, 0, 1, BLKMULT, 0, pax_id, no_op,
 	ustar_rd, tar_endrd, no_op, pax_wr, tar_endwr, tar_trail,
-	tar_opt},
+	pax_opt},
 #endif
 };
 #define	F_OCPIO	0	/* format when called as cpio -6 */
@@ -277,21 +277,20 @@ options(int argc, char **argv)
 	if (strcmp(NM_TAR, argv0) == 0) {
 		op_mode = OP_TAR;
 		tar_options(argc, argv);
-		return;
-	}
 #ifndef NOCPIO
-	else if (strcmp(NM_CPIO, argv0) == 0) {
+	} else if (strcmp(NM_CPIO, argv0) == 0) {
 		op_mode = OP_CPIO;
 		cpio_options(argc, argv);
-		return;
-	}
 #endif /* !NOCPIO */
-	/*
-	 * assume pax as the default
-	 */
-	argv0 = NM_PAX;
-	op_mode = OP_PAX;
-	pax_options(argc, argv);
+	} else {
+		argv0 = NM_PAX;
+		op_mode = OP_PAX;
+		pax_options(argc, argv);
+	}
+
+	/* Line-buffer the file list output as needed. */
+	if (listf != stderr)
+		setvbuf(listf, NULL, _IOLBF, 0);
 }
 
 /*

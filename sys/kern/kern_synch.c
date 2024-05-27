@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_synch.c,v 1.201 2024/03/30 13:33:20 mpi Exp $	*/
+/*	$OpenBSD: kern_synch.c,v 1.204 2024/05/22 09:24:11 claudio Exp $	*/
 /*	$NetBSD: kern_synch.c,v 1.37 1996/04/22 01:38:37 christos Exp $	*/
 
 /*
@@ -342,6 +342,9 @@ sleep_setup(const volatile void *ident, int prio, const char *wmesg)
 	if (p->p_stat != SONPROC)
 		panic("tsleep: not SONPROC");
 #endif
+	/* exiting processes are not allowed to catch signals */
+	if (p->p_flag & P_WEXIT)
+		CLR(prio, PCATCH);
 
 	SCHED_LOCK(s);
 
@@ -518,6 +521,7 @@ unsleep(struct proc *p)
 	if (p->p_wchan != NULL) {
 		TAILQ_REMOVE(&slpque[LOOKUP(p->p_wchan)], p, p_runq);
 		p->p_wchan = NULL;
+		p->p_wmesg = NULL;
 		TRACEPOINT(sched, unsleep, p->p_tid + THREAD_PID_OFFSET,
 		    p->p_p->ps_pid);
 	}
@@ -548,6 +552,7 @@ wakeup_n(const volatile void *ident, int n)
 		if (p->p_wchan == ident) {
 			TAILQ_REMOVE(qp, p, p_runq);
 			p->p_wchan = NULL;
+			p->p_wmesg = NULL;
 			TAILQ_INSERT_TAIL(&wakeq, p, p_runq);
 			--n;
 		}
@@ -578,15 +583,18 @@ sys_sched_yield(struct proc *p, void *v, register_t *retval)
 	uint8_t newprio;
 	int s;
 
-	SCHED_LOCK(s);
 	/*
 	 * If one of the threads of a multi-threaded process called
 	 * sched_yield(2), drop its priority to ensure its siblings
 	 * can make some progress.
 	 */
+	mtx_enter(&p->p_p->ps_mtx);
 	newprio = p->p_usrpri;
 	TAILQ_FOREACH(q, &p->p_p->ps_threads, p_thr_link)
 		newprio = max(newprio, q->p_runpri);
+	mtx_leave(&p->p_p->ps_mtx);
+
+	SCHED_LOCK(s);
 	setrunqueue(p->p_cpu, p, newprio);
 	p->p_ru.ru_nvcsw++;
 	mi_switch();

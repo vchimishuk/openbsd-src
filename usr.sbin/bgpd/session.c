@@ -1,4 +1,4 @@
-/*	$OpenBSD: session.c,v 1.470 2024/04/11 08:33:15 claudio Exp $ */
+/*	$OpenBSD: session.c,v 1.478 2024/05/22 08:41:14 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004, 2005 Henning Brauer <henning@openbsd.org>
@@ -66,7 +66,6 @@ int	session_setup_socket(struct peer *);
 void	session_accept(int);
 int	session_connect(struct peer *);
 void	session_tcp_established(struct peer *);
-void	session_capa_ann_none(struct peer *);
 int	session_capa_add(struct ibuf *, uint8_t, uint8_t);
 int	session_capa_add_mp(struct ibuf *, uint8_t);
 int	session_capa_add_afi(struct ibuf *, uint8_t, uint8_t);
@@ -87,8 +86,8 @@ int	parse_header(struct peer *, u_char *, uint16_t *, uint8_t *);
 int	parse_open(struct peer *);
 int	parse_update(struct peer *);
 int	parse_rrefresh(struct peer *);
-int	parse_notification(struct peer *);
-int	parse_capabilities(struct peer *, u_char *, uint16_t, uint32_t *);
+void	parse_notification(struct peer *);
+int	parse_capabilities(struct peer *, struct ibuf *, uint32_t *);
 int	capa_neg_calc(struct peer *);
 void	session_dispatch_imsg(struct imsgbuf *, int, u_int *);
 void	session_up(struct peer *);
@@ -115,6 +114,11 @@ u_int			 peer_cnt;
 
 struct mrt_head		 mrthead;
 time_t			 pauseaccept;
+
+static const uint8_t	 marker[MSGSIZE_HEADER_MARKER] = {
+	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+};
 
 static inline int
 peer_compare(const struct peer *a, const struct peer *b)
@@ -266,11 +270,12 @@ session_main(int debug, int verbose)
 					if (p->demoted)
 						session_demote(p, -1);
 					p->conf.demote_group[0] = 0;
-					session_stop(p, ERR_CEASE_PEER_UNCONF);
+					session_stop(p, ERR_CEASE_PEER_UNCONF,
+					    NULL);
 					timer_remove_all(&p->timers);
 					tcp_md5_del_listener(conf, p);
-					log_peer_warnx(&p->conf, "removed");
 					RB_REMOVE(peer_head, &conf->peers, p);
+					log_peer_warnx(&p->conf, "removed");
 					free(p);
 					peer_cnt--;
 					continue;
@@ -513,12 +518,10 @@ session_main(int debug, int verbose)
 	}
 
 	RB_FOREACH_SAFE(p, peer_head, &conf->peers, next) {
-		RB_REMOVE(peer_head, &conf->peers, p);
-		strlcpy(p->conf.reason,
-		    "bgpd shutting down",
-		    sizeof(p->conf.reason));
-		session_stop(p, ERR_CEASE_ADMIN_DOWN);
+		session_stop(p, ERR_CEASE_ADMIN_DOWN, "bgpd shutting down");
 		timer_remove_all(&p->timers);
+		tcp_md5_del_listener(conf, p);
+		RB_REMOVE(peer_head, &conf->peers, p);
 		free(p);
 	}
 
@@ -624,6 +627,9 @@ bgp_fsm(struct peer *peer, enum session_events event)
 			}
 			peer->passive = 0;
 			break;
+		case EVNT_STOP:
+			timer_stop(&peer->timers, Timer_IdleHold);
+			break;
 		default:
 			/* ignore */
 			break;
@@ -723,13 +729,7 @@ bgp_fsm(struct peer *peer, enum session_events event)
 			change_state(peer, STATE_OPENCONFIRM, event);
 			break;
 		case EVNT_RCVD_NOTIFICATION:
-			if (parse_notification(peer)) {
-				change_state(peer, STATE_IDLE, event);
-				/* don't punish, capa negotiation */
-				timer_set(&peer->timers, Timer_IdleHold, 0);
-				peer->IdleHoldTime /= 2;
-			} else
-				change_state(peer, STATE_IDLE, event);
+			parse_notification(peer);
 			break;
 		default:
 			session_notification(peer,
@@ -769,7 +769,6 @@ bgp_fsm(struct peer *peer, enum session_events event)
 			break;
 		case EVNT_RCVD_NOTIFICATION:
 			parse_notification(peer);
-			change_state(peer, STATE_IDLE, event);
 			break;
 		default:
 			session_notification(peer,
@@ -815,7 +814,6 @@ bgp_fsm(struct peer *peer, enum session_events event)
 			break;
 		case EVNT_RCVD_NOTIFICATION:
 			parse_notification(peer);
-			change_state(peer, STATE_IDLE, event);
 			break;
 		default:
 			session_notification(peer,
@@ -937,8 +935,6 @@ change_state(struct peer *peer, enum session_state state,
 			/* initialize capability negotiation structures */
 			memcpy(&peer->capa.ann, &peer->conf.capabilities,
 			    sizeof(peer->capa.ann));
-			if (!peer->conf.announce_capa)
-				session_capa_ann_none(peer);
 		}
 		break;
 	case STATE_CONNECT:
@@ -1177,6 +1173,13 @@ session_setup_socket(struct peer *p)
 		}
 		break;
 	case AID_INET6:
+		if (setsockopt(p->fd, IPPROTO_IPV6, IPV6_TCLASS, &pre,
+		    sizeof(pre)) == -1) {
+			log_peer_warn(&p->conf, "session_setup_socket "
+			    "setsockopt TCLASS");
+			return (-1);
+		}
+
 		if (p->conf.ebgp) {
 			/*
 			 * set hoplimit to foreign router's distance
@@ -1214,13 +1217,8 @@ session_setup_socket(struct peer *p)
 
 	/* limit bufsize. no biggie if it fails */
 	bsize = 65535;
-	while (bsize > 8192 && setsockopt(p->fd, SOL_SOCKET, SO_RCVBUF,
-	    &bsize, sizeof(bsize)) == -1 && errno != EINVAL)
-		bsize /= 2;
-	bsize = 65535;
-	while (bsize > 8192 && setsockopt(p->fd, SOL_SOCKET, SO_SNDBUF,
-	    &bsize, sizeof(bsize)) == -1 && errno != EINVAL)
-		bsize /= 2;
+	setsockopt(p->fd, SOL_SOCKET, SO_RCVBUF, &bsize, sizeof(bsize));
+	setsockopt(p->fd, SOL_SOCKET, SO_SNDBUF, &bsize, sizeof(bsize));
 
 	return (0);
 }
@@ -1336,12 +1334,6 @@ session_tcp_established(struct peer *peer)
 	    &peer->if_scope);
 }
 
-void
-session_capa_ann_none(struct peer *peer)
-{
-	memset(&peer->capa.ann, 0, sizeof(peer->capa.ann));
-}
-
 int
 session_capa_add(struct ibuf *opb, uint8_t capa_code, uint8_t capa_len)
 {
@@ -1393,12 +1385,9 @@ session_capa_add_afi(struct ibuf *b, uint8_t aid, uint8_t flags)
 struct bgp_msg *
 session_newmsg(enum msg_type msgtype, uint16_t len)
 {
-	u_char			 marker[MSGSIZE_HEADER_MARKER];
 	struct bgp_msg		*msg;
 	struct ibuf		*buf;
 	int			 errs = 0;
-
-	memset(marker, 0xff, sizeof(marker));
 
 	if ((buf = ibuf_open(len)) == NULL)
 		return (NULL);
@@ -1613,7 +1602,7 @@ session_open(struct peer *p)
 	errs += ibuf_add_n16(buf->buf, p->conf.local_short_as);
 	errs += ibuf_add_n16(buf->buf, holdtime);
 	/* is already in network byte order */
-	errs += ibuf_add(buf->buf, &conf->bgpid, sizeof(conf->bgpid));
+	errs += ibuf_add_n32(buf->buf, conf->bgpid);
 	errs += ibuf_add_n8(buf->buf, optparamlen);
 
 	if (extlen) {
@@ -2076,9 +2065,6 @@ parse_header(struct peer *peer, u_char *data, uint16_t *len, uint8_t *type)
 {
 	u_char			*p;
 	uint16_t		 olen;
-	static const uint8_t	 marker[MSGSIZE_HEADER_MARKER] = { 0xff, 0xff,
-				    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-				    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
 
 	/* caller MUST make sure we are getting 19 bytes! */
 	p = data;
@@ -2170,13 +2156,13 @@ parse_header(struct peer *peer, u_char *data, uint16_t *len, uint8_t *type)
 int
 parse_open(struct peer *peer)
 {
-	u_char		*p, *op_val;
+	struct ibuf	 ibuf;
+	u_char		*p;
 	uint8_t		 version, rversion;
 	uint16_t	 short_as, msglen;
-	uint16_t	 holdtime, oholdtime, myholdtime;
+	uint16_t	 holdtime, myholdtime;
 	uint32_t	 as, bgpid;
-	uint16_t	 optparamlen, extlen, plen, op_len;
-	uint8_t		 op_type;
+	uint8_t		 optparamlen;
 
 	p = peer->rbuf->rptr;
 	p += MSGSIZE_HEADER_MARKER;
@@ -2185,9 +2171,17 @@ parse_open(struct peer *peer)
 
 	p = peer->rbuf->rptr;
 	p += MSGSIZE_HEADER;	/* header is already checked */
+	msglen -= MSGSIZE_HEADER;
 
-	memcpy(&version, p, sizeof(version));
-	p += sizeof(version);
+	/* XXX */
+	ibuf_from_buffer(&ibuf, p, msglen);
+
+	if (ibuf_get_n8(&ibuf, &version) == -1 ||
+	    ibuf_get_n16(&ibuf, &short_as) == -1 ||
+	    ibuf_get_n16(&ibuf, &holdtime) == -1 ||
+	    ibuf_get_n32(&ibuf, &bgpid) == -1 ||
+	    ibuf_get_n8(&ibuf, &optparamlen) == -1)
+		goto bad_len;
 
 	if (version != BGP_VERSION) {
 		log_peer_warnx(&peer->conf,
@@ -2202,9 +2196,7 @@ parse_open(struct peer *peer)
 		return (-1);
 	}
 
-	memcpy(&short_as, p, sizeof(short_as));
-	p += sizeof(short_as);
-	as = peer->short_as = ntohs(short_as);
+	as = peer->short_as = short_as;
 	if (as == 0) {
 		log_peer_warnx(&peer->conf,
 		    "peer requests unacceptable AS %u", as);
@@ -2213,10 +2205,6 @@ parse_open(struct peer *peer)
 		return (-1);
 	}
 
-	memcpy(&oholdtime, p, sizeof(oholdtime));
-	p += sizeof(oholdtime);
-
-	holdtime = ntohs(oholdtime);
 	if (holdtime && holdtime < peer->conf.min_holdtime) {
 		log_peer_warnx(&peer->conf,
 		    "peer requests unacceptable holdtime %u", holdtime);
@@ -2233,104 +2221,95 @@ parse_open(struct peer *peer)
 	else
 		peer->holdtime = myholdtime;
 
-	memcpy(&bgpid, p, sizeof(bgpid));
-	p += sizeof(bgpid);
-
 	/* check bgpid for validity - just disallow 0 */
-	if (ntohl(bgpid) == 0) {
-		log_peer_warnx(&peer->conf, "peer BGPID %u unacceptable",
-		    ntohl(bgpid));
+	if (bgpid == 0) {
+		log_peer_warnx(&peer->conf, "peer BGPID 0 unacceptable");
 		session_notification(peer, ERR_OPEN, ERR_OPEN_BGPID, NULL);
 		change_state(peer, STATE_IDLE, EVNT_RCVD_OPEN);
 		return (-1);
 	}
 	peer->remote_bgpid = bgpid;
 
-	extlen = 0;
-	optparamlen = *p++;
+	if (optparamlen != 0) {
+		struct ibuf oparams, op;
+		uint8_t ext_type, op_type;
+		uint16_t ext_len, op_len;
 
-	if (optparamlen == 0) {
-		if (msglen != MSGSIZE_OPEN_MIN) {
-bad_len:
-			log_peer_warnx(&peer->conf,
-			    "corrupt OPEN message received: length mismatch");
-			session_notification(peer, ERR_OPEN, 0, NULL);
-			change_state(peer, STATE_IDLE, EVNT_RCVD_OPEN);
-			return (-1);
-		}
-	} else {
-		if (msglen < MSGSIZE_OPEN_MIN + 1)
+		ibuf_from_ibuf(&oparams, &ibuf);
+
+		/* check for RFC9072 encoding */
+		if (ibuf_get_n8(&oparams, &ext_type) == -1)
 			goto bad_len;
-
-		op_type = *p;
-		if (op_type == OPT_PARAM_EXT_LEN) {
-			p++;
-			memcpy(&optparamlen, p, sizeof(optparamlen));
-			optparamlen = ntohs(optparamlen);
-			p += sizeof(optparamlen);
-			extlen = 1;
-		}
-
-		/* RFC9020 encoding has 3 extra bytes */
-		if (optparamlen + 3 * extlen != msglen - MSGSIZE_OPEN_MIN)
-			goto bad_len;
-	}
-
-	plen = optparamlen;
-	while (plen > 0) {
-		if (plen < 2 + extlen)
-			goto bad_len;
-
-		memcpy(&op_type, p, sizeof(op_type));
-		p += sizeof(op_type);
-		plen -= sizeof(op_type);
-		if (!extlen) {
-			op_len = *p++;
-			plen--;
-		} else {
-			memcpy(&op_len, p, sizeof(op_len));
-			op_len = ntohs(op_len);
-			p += sizeof(op_len);
-			plen -= sizeof(op_len);
-		}
-		if (op_len > 0) {
-			if (plen < op_len)
+		if (ext_type == OPT_PARAM_EXT_LEN) {
+			if (ibuf_get_n16(&oparams, &ext_len) == -1)
 				goto bad_len;
-			op_val = p;
-			p += op_len;
-			plen -= op_len;
-		} else
-			op_val = NULL;
+			/* skip RFC9072 header */
+			if (ibuf_skip(&ibuf, 3) == -1)
+				goto bad_len;
+		} else {
+			ext_len = optparamlen;
+			ibuf_rewind(&oparams);
+		}
 
-		switch (op_type) {
-		case OPT_PARAM_CAPABILITIES:		/* RFC 3392 */
-			if (parse_capabilities(peer, op_val, op_len,
-			    &as) == -1) {
-				session_notification(peer, ERR_OPEN, 0, NULL);
+		if (ibuf_truncate(&oparams, ext_len) == -1 ||
+		    ibuf_skip(&ibuf, ext_len) == -1)
+			goto bad_len;
+
+		while (ibuf_size(&oparams) > 0) {
+			if (ibuf_get_n8(&oparams, &op_type) == -1)
+				goto bad_len;
+
+			if (ext_type == OPT_PARAM_EXT_LEN) {
+				if (ibuf_get_n16(&oparams, &op_len) == -1)
+					goto bad_len;
+			} else {
+				uint8_t tmp;
+				if (ibuf_get_n8(&oparams, &tmp) == -1)
+					goto bad_len;
+				op_len = tmp;
+			}
+
+			if (ibuf_get_ibuf(&oparams, op_len, &op) == -1)
+				goto bad_len;
+
+			switch (op_type) {
+			case OPT_PARAM_CAPABILITIES:		/* RFC 3392 */
+				if (parse_capabilities(peer, &op, &as) == -1) {
+					session_notification(peer, ERR_OPEN, 0,
+					    NULL);
+					change_state(peer, STATE_IDLE,
+					    EVNT_RCVD_OPEN);
+					return (-1);
+				}
+				break;
+			case OPT_PARAM_AUTH:			/* deprecated */
+			default:
+				/*
+				 * unsupported type
+				 * the RFCs tell us to leave the data section
+				 * empty and notify the peer with ERR_OPEN,
+				 * ERR_OPEN_OPT. How the peer should know
+				 * _which_ optional parameter we don't support
+				 * is beyond me.
+				 */
+				log_peer_warnx(&peer->conf,
+				    "received OPEN message with unsupported "
+				    "optional parameter: type %u", op_type);
+				session_notification(peer, ERR_OPEN,
+				    ERR_OPEN_OPT, NULL);
 				change_state(peer, STATE_IDLE, EVNT_RCVD_OPEN);
 				return (-1);
 			}
-			break;
-		case OPT_PARAM_AUTH:			/* deprecated */
-		default:
-			/*
-			 * unsupported type
-			 * the RFCs tell us to leave the data section empty
-			 * and notify the peer with ERR_OPEN, ERR_OPEN_OPT.
-			 * How the peer should know _which_ optional parameter
-			 * we don't support is beyond me.
-			 */
-			log_peer_warnx(&peer->conf,
-			    "received OPEN message with unsupported optional "
-			    "parameter: type %u", op_type);
-			session_notification(peer, ERR_OPEN, ERR_OPEN_OPT,
-				NULL);
-			change_state(peer, STATE_IDLE, EVNT_RCVD_OPEN);
-			/* no punish */
-			timer_set(&peer->timers, Timer_IdleHold, 0);
-			peer->IdleHoldTime /= 2;
-			return (-1);
 		}
+	}
+
+	if (ibuf_size(&ibuf) != 0) {
+ bad_len:
+		log_peer_warnx(&peer->conf,
+		    "corrupt OPEN message received: length mismatch");
+		session_notification(peer, ERR_OPEN, 0, NULL);
+		change_state(peer, STATE_IDLE, EVNT_RCVD_OPEN);
+		return (-1);
 	}
 
 	/* if remote-as is zero and it's a cloned neighbor, accept any */
@@ -2352,8 +2331,10 @@ bad_len:
 
 	/* on iBGP sessions check for bgpid collision */
 	if (!peer->conf.ebgp && peer->remote_bgpid == conf->bgpid) {
-		log_peer_warnx(&peer->conf, "peer BGPID %u conflicts with ours",
-		    ntohl(bgpid));
+		struct in_addr ina;
+		ina.s_addr = htonl(bgpid);
+		log_peer_warnx(&peer->conf, "peer BGPID %s conflicts with ours",
+		    inet_ntoa(ina));
 		session_notification(peer, ERR_OPEN, ERR_OPEN_BGPID, NULL);
 		change_state(peer, STATE_IDLE, EVNT_RCVD_OPEN);
 		return (-1);
@@ -2397,6 +2378,7 @@ int
 parse_rrefresh(struct peer *peer)
 {
 	struct route_refresh rr;
+	struct ibuf ibuf;
 	uint16_t afi, datalen;
 	uint8_t aid, safi, subtype;
 	u_char *p;
@@ -2408,21 +2390,17 @@ parse_rrefresh(struct peer *peer)
 
 	p = peer->rbuf->rptr;
 	p += MSGSIZE_HEADER;	/* header is already checked */
+	datalen -= MSGSIZE_HEADER;
 
-	/*
-	 * We could check if we actually announced the capability but
-	 * as long as the message is correctly encoded we don't care.
-	 */
+	/* XXX */
+	ibuf_from_buffer(&ibuf, p, datalen);
 
-	/* afi, 2 byte */
-	memcpy(&afi, p, sizeof(afi));
-	afi = ntohs(afi);
-	p += 2;
-	/* subtype, 1 byte */
-	subtype = *p;
-	p += 1;
-	/* safi, 1 byte */
-	safi = *p;
+	if (ibuf_get_n16(&ibuf, &afi) == -1 ||
+	    ibuf_get_n8(&ibuf, &subtype) == -1 ||
+	    ibuf_get_n8(&ibuf, &safi) == -1) {
+		/* minimum size checked in session_process_msg() */
+		fatalx("%s: message too small", __func__);
+	}
 
 	/* check subtype if peer announced enhanced route refresh */
 	if (peer->capa.neg.enhanced_rr) {
@@ -2448,11 +2426,9 @@ parse_rrefresh(struct peer *peer)
 				log_peer_warnx(&peer->conf,
 				    "received RREFRESH: illegal len: %u byte",
 				    datalen);
-				p = peer->rbuf->rptr;
-				p += MSGSIZE_HEADER;
-				datalen -= MSGSIZE_HEADER;
-				session_notification_data(peer, ERR_RREFRESH,
-				    ERR_RR_INV_LEN, p, datalen);
+				ibuf_rewind(&ibuf);
+				session_notification(peer, ERR_RREFRESH,
+				    ERR_RR_INV_LEN, &ibuf);
 				bgp_fsm(peer, EVNT_CON_FATAL);
 				return (-1);
 			}
@@ -2493,7 +2469,7 @@ parse_rrefresh(struct peer *peer)
 	return (0);
 }
 
-int
+void
 parse_notification(struct peer *peer)
 {
 	struct ibuf	 ibuf;
@@ -2514,11 +2490,11 @@ parse_notification(struct peer *peer)
 
 	/* XXX */
 	ibuf_from_buffer(&ibuf, p, datalen);
-	
+
 	if (ibuf_get_n8(&ibuf, &errcode) == -1 ||
 	    ibuf_get_n8(&ibuf, &subcode) == -1) {
 		log_peer_warnx(&peer->conf, "received bad notification");
-		return (-1);
+		goto done;
 	}
 
 	peer->errcnt++;
@@ -2541,67 +2517,43 @@ parse_notification(struct peer *peer)
 		}
 	}
 
-	if (errcode == ERR_OPEN && subcode == ERR_OPEN_OPT) {
-		session_capa_ann_none(peer);
-		return (1);
-	}
-
-	return (0);
+done:
+	change_state(peer, STATE_IDLE, EVNT_RCVD_NOTIFICATION);
 }
 
 int
-parse_capabilities(struct peer *peer, u_char *d, uint16_t dlen, uint32_t *as)
+parse_capabilities(struct peer *peer, struct ibuf *buf, uint32_t *as)
 {
-	u_char		*capa_val;
-	uint32_t	 remote_as;
-	uint16_t	 len;
-	uint16_t	 afi;
-	uint16_t	 gr_header;
-	uint8_t		 safi;
-	uint8_t		 aid;
-	uint8_t		 flags;
-	uint8_t		 capa_code;
-	uint8_t		 capa_len;
-	uint8_t		 i;
+	struct ibuf	 capabuf;
+	uint16_t	 afi, gr_header;
+	uint8_t		 capa_code, capa_len;
+	uint8_t		 safi, aid, role, flags;
 
-	len = dlen;
-	while (len > 0) {
-		if (len < 2) {
+	while (ibuf_size(buf) > 0) {
+		if (ibuf_get_n8(buf, &capa_code) == -1 ||
+		    ibuf_get_n8(buf, &capa_len) == -1) {
 			log_peer_warnx(&peer->conf, "Bad capabilities attr "
-			    "length: %u, too short", len);
+			    "length: too short");
 			return (-1);
 		}
-		memcpy(&capa_code, d, sizeof(capa_code));
-		d += sizeof(capa_code);
-		len -= sizeof(capa_code);
-		memcpy(&capa_len, d, sizeof(capa_len));
-		d += sizeof(capa_len);
-		len -= sizeof(capa_len);
-		if (capa_len > 0) {
-			if (len < capa_len) {
-				log_peer_warnx(&peer->conf,
-				    "Bad capabilities attr length: "
-				    "len %u smaller than capa_len %u",
-				    len, capa_len);
-				return (-1);
-			}
-			capa_val = d;
-			d += capa_len;
-			len -= capa_len;
-		} else
-			capa_val = NULL;
+		if (ibuf_get_ibuf(buf, capa_len, &capabuf) == -1) {
+			log_peer_warnx(&peer->conf,
+			    "Received bad capabilities attr length: "
+			    "len %zu smaller than capa_len %u",
+			    ibuf_size(buf), capa_len);
+			return (-1);
+		}
 
 		switch (capa_code) {
 		case CAPA_MP:			/* RFC 4760 */
-			if (capa_len != 4) {
+			if (capa_len != 4 ||
+			    ibuf_get_n16(&capabuf, &afi) == -1 ||
+			    ibuf_skip(&capabuf, 1) == -1 ||
+			    ibuf_get_n8(&capabuf, &safi) == -1) {
 				log_peer_warnx(&peer->conf,
-				    "Bad multi protocol capability length: "
-				    "%u", capa_len);
+				    "Received bad multi protocol capability");
 				break;
 			}
-			memcpy(&afi, capa_val, sizeof(afi));
-			afi = ntohs(afi);
-			memcpy(&safi, capa_val + 3, sizeof(safi));
 			if (afi2aid(afi, safi, &aid) == -1) {
 				log_peer_warnx(&peer->conf,
 				    "Received multi protocol capability: "
@@ -2615,9 +2567,10 @@ parse_capabilities(struct peer *peer, u_char *d, uint16_t dlen, uint32_t *as)
 			peer->capa.peer.refresh = 1;
 			break;
 		case CAPA_ROLE:
-			if (capa_len != 1) {
+			if (capa_len != 1 ||
+			    ibuf_get_n8(&capabuf, &role) == -1) {
 				log_peer_warnx(&peer->conf,
-				    "Bad role capability length: %u", capa_len);
+				    "Received bad role capability");
 				break;
 			}
 			if (!peer->conf.ebgp) {
@@ -2626,7 +2579,7 @@ parse_capabilities(struct peer *peer, u_char *d, uint16_t dlen, uint32_t *as)
 				break;
 			}
 			peer->capa.peer.policy = 1;
-			peer->remote_role = capa2role(*capa_val);
+			peer->remote_role = capa2role(role);
 			break;
 		case CAPA_RESTART:
 			if (capa_len == 2) {
@@ -2636,29 +2589,35 @@ parse_capabilities(struct peer *peer, u_char *d, uint16_t dlen, uint32_t *as)
 				break;
 			} else if (capa_len % 4 != 2) {
 				log_peer_warnx(&peer->conf,
-				    "Bad graceful restart capability length: "
-				    "%u", capa_len);
+				    "Bad graceful restart capability");
 				peer->capa.peer.grestart.restart = 0;
 				peer->capa.peer.grestart.timeout = 0;
 				break;
 			}
 
-			memcpy(&gr_header, capa_val, sizeof(gr_header));
-			gr_header = ntohs(gr_header);
+			if (ibuf_get_n16(&capabuf, &gr_header) == -1) {
+ bad_gr_restart:
+				log_peer_warnx(&peer->conf,
+				    "Bad graceful restart capability");
+				peer->capa.peer.grestart.restart = 0;
+				peer->capa.peer.grestart.timeout = 0;
+				break;
+			}
+
 			peer->capa.peer.grestart.timeout =
 			    gr_header & CAPA_GR_TIMEMASK;
 			if (peer->capa.peer.grestart.timeout == 0) {
 				log_peer_warnx(&peer->conf, "Received "
-				    "graceful restart timeout is zero");
+				    "graceful restart with zero timeout");
 				peer->capa.peer.grestart.restart = 0;
 				break;
 			}
 
-			for (i = 2; i <= capa_len - 4; i += 4) {
-				memcpy(&afi, capa_val + i, sizeof(afi));
-				afi = ntohs(afi);
-				safi = capa_val[i + 2];
-				flags = capa_val[i + 3];
+			while (ibuf_size(&capabuf) > 0) {
+				if (ibuf_get_n16(&capabuf, &afi) == -1 ||
+				    ibuf_get_n8(&capabuf, &safi) == -1 ||
+				    ibuf_get_n8(&capabuf, &flags) == -1)
+					goto bad_gr_restart;
 				if (afi2aid(afi, safi, &aid) == -1) {
 					log_peer_warnx(&peer->conf,
 					    "Received graceful restart capa: "
@@ -2678,15 +2637,13 @@ parse_capabilities(struct peer *peer, u_char *d, uint16_t dlen, uint32_t *as)
 			}
 			break;
 		case CAPA_AS4BYTE:
-			if (capa_len != 4) {
+			if (capa_len != 4 ||
+			    ibuf_get_n32(&capabuf, as) == -1) {
 				log_peer_warnx(&peer->conf,
-				    "Bad AS4BYTE capability length: "
-				    "%u", capa_len);
+				    "Received bad AS4BYTE capability");
 				peer->capa.peer.as4byte = 0;
 				break;
 			}
-			memcpy(&remote_as, capa_val, sizeof(remote_as));
-			*as = ntohl(remote_as);
 			if (*as == 0) {
 				log_peer_warnx(&peer->conf,
 				    "peer requests unacceptable AS %u", *as);
@@ -2699,18 +2656,18 @@ parse_capabilities(struct peer *peer, u_char *d, uint16_t dlen, uint32_t *as)
 			break;
 		case CAPA_ADD_PATH:
 			if (capa_len % 4 != 0) {
+ bad_add_path:
 				log_peer_warnx(&peer->conf,
-				    "Bad ADD-PATH capability length: "
-				    "%u", capa_len);
+				    "Received bad ADD-PATH capability");
 				memset(peer->capa.peer.add_path, 0,
 				    sizeof(peer->capa.peer.add_path));
 				break;
 			}
-			for (i = 0; i <= capa_len - 4; i += 4) {
-				memcpy(&afi, capa_val + i, sizeof(afi));
-				afi = ntohs(afi);
-				safi = capa_val[i + 2];
-				flags = capa_val[i + 3];
+			while (ibuf_size(&capabuf) > 0) {
+				if (ibuf_get_n16(&capabuf, &afi) == -1 ||
+				    ibuf_get_n8(&capabuf, &safi) == -1 ||
+				    ibuf_get_n8(&capabuf, &flags) == -1)
+					goto bad_add_path;
 				if (afi2aid(afi, safi, &aid) == -1) {
 					log_peer_warnx(&peer->conf,
 					    "Received ADD-PATH capa: "
@@ -3165,7 +3122,8 @@ session_dispatch_imsg(struct imsgbuf *imsgbuf, int idx, u_int *listener_cnt)
 					} else if (!depend_ok && p->depend_ok) {
 						p->depend_ok = depend_ok;
 						session_stop(p,
-						    ERR_CEASE_OTHER_CHANGE);
+						    ERR_CEASE_OTHER_CHANGE,
+						    NULL);
 					}
 				}
 			break;
@@ -3631,21 +3589,21 @@ session_demote(struct peer *p, int level)
 }
 
 void
-session_stop(struct peer *peer, uint8_t subcode)
+session_stop(struct peer *peer, uint8_t subcode, const char *reason)
 {
 	struct ibuf *ibuf;
-	char *communication;
 
-	communication = peer->conf.reason;
+	if (reason != NULL)
+		strlcpy(peer->conf.reason, reason, sizeof(peer->conf.reason));
 
 	ibuf = ibuf_dynamic(0, REASON_LEN);
 
 	if ((subcode == ERR_CEASE_ADMIN_DOWN ||
 	    subcode == ERR_CEASE_ADMIN_RESET) &&
-	    communication != NULL && *communication != '\0' &&
+	    reason != NULL && *reason != '\0' &&
 	    ibuf != NULL) {
-		if (ibuf_add_n8(ibuf, strlen(communication)) == -1 ||
-		    ibuf_add(ibuf, communication, strlen(communication))) {
+		if (ibuf_add_n8(ibuf, strlen(reason)) == -1 ||
+		    ibuf_add(ibuf, reason, strlen(reason))) {
 			log_peer_warnx(&peer->conf,
 			    "trying to send overly long shutdown reason");
 			ibuf_free(ibuf);
@@ -3660,6 +3618,13 @@ session_stop(struct peer *peer, uint8_t subcode)
 		break;
 	default:
 		/* session not open, no need to send notification */
+		if (subcode >= sizeof(suberr_cease_names) / sizeof(char *) ||
+		    suberr_cease_names[subcode] == NULL)
+			log_peer_warnx(&peer->conf, "session stop: %s, "
+			    "unknown subcode %u", errnames[ERR_CEASE], subcode);
+		else
+			log_peer_warnx(&peer->conf, "session stop: %s, %s",
+			    errnames[ERR_CEASE], suberr_cease_names[subcode]);
 		break;
 	}
 	ibuf_free(ibuf);

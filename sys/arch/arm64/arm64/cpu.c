@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.c,v 1.114 2024/04/13 14:19:39 kettenis Exp $	*/
+/*	$OpenBSD: cpu.c,v 1.116 2024/05/27 06:20:59 kettenis Exp $	*/
 
 /*
  * Copyright (c) 2016 Dale Rahn <drahn@dalerahn.com>
@@ -741,6 +741,37 @@ cpu_identify(struct cpu_info *ci)
 	 * ID_AA64ISAR1
 	 */
 	id = READ_SPECIALREG(id_aa64isar1_el1);
+
+	if (ID_AA64ISAR1_LS64(id) >= ID_AA64ISAR1_LS64_BASE) {
+		printf("%sLS64", sep);
+		sep = ",";
+	}
+	if (ID_AA64ISAR1_LS64(id) >= ID_AA64ISAR1_LS64_V)
+		printf("+V");
+	if (ID_AA64ISAR1_LS64(id) >= ID_AA64ISAR1_LS64_ACCDATA)
+		printf("+ACCDATA");
+
+	if (ID_AA64ISAR1_XS(id) >= ID_AA64ISAR1_XS_IMPL) {
+		printf("%sXS", sep);
+		sep = ",";
+	}
+
+	if (ID_AA64ISAR1_I8MM(id) >= ID_AA64ISAR1_I8MM_IMPL) {
+		printf("%sI8MM", sep);
+		sep = ",";
+	}
+
+	if (ID_AA64ISAR1_DGH(id) >= ID_AA64ISAR1_DGH_IMPL) {
+		printf("%sDGH", sep);
+		sep = ",";
+	}
+
+	if (ID_AA64ISAR1_BF16(id) >= ID_AA64ISAR1_BF16_BASE) {
+		printf("%sBF16", sep);
+		sep = ",";
+	}
+	if (ID_AA64ISAR1_BF16(id) >= ID_AA64ISAR1_BF16_EBF)
+		printf("+EBF");
 
 	if (ID_AA64ISAR1_SPECRES(id) >= ID_AA64ISAR1_SPECRES_IMPL) {
 		printf("%sSPECRES", sep);
@@ -1526,7 +1557,8 @@ cpu_suspend_primary(void)
 	 * wake us up by clearing the flag.
 	 */
 	cpu_suspended = 1;
-	intr_enable_wakeup();
+	arm_intr_func.setipl(IPL_NONE);
+	intr_enable();
 
 	while (cpu_suspended) {
 #if NPSCI > 0
@@ -1542,7 +1574,8 @@ cpu_suspend_primary(void)
 	}
 
 resume:
-	intr_disable_wakeup();
+	intr_disable();
+	arm_intr_func.setipl(IPL_HIGH);
 
 	/* Unmask clock interrupts. */
 	WRITE_SPECIALREG(cntv_ctl_el0,

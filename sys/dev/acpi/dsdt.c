@@ -1,4 +1,4 @@
-/* $OpenBSD: dsdt.c,v 1.266 2024/04/13 23:44:11 jsg Exp $ */
+/* $OpenBSD: dsdt.c,v 1.268 2024/05/14 08:26:13 jsg Exp $ */
 /*
  * Copyright (c) 2005 Jordan Hargrave <jordan@openbsd.org>
  *
@@ -56,8 +56,6 @@ struct aml_scope	*aml_load(struct acpi_softc *, struct aml_scope *,
 
 void			aml_copyvalue(struct aml_value *, struct aml_value *);
 
-void			aml_setvalue(struct aml_scope *, struct aml_value *,
-			    struct aml_value *, int64_t);
 void			aml_freevalue(struct aml_value *);
 struct aml_value	*aml_allocvalue(int, int64_t, const void *);
 struct aml_value	*_aml_setvalue(struct aml_value *, int, int64_t,
@@ -77,16 +75,6 @@ void			aml_delref(struct aml_value **, const char *);
 void			aml_bufcpy(void *, int, const void *, int, int);
 
 int			aml_pc(uint8_t *);
-
-struct aml_value	*aml_parseop(struct aml_scope *, struct aml_value *,int);
-struct aml_value	*aml_parsetarget(struct aml_scope *, struct aml_value *,
-			    struct aml_value **);
-struct aml_value	*aml_parseterm(struct aml_scope *, struct aml_value *);
-
-struct aml_value	*aml_evaltarget(struct aml_scope *scope,
-			    struct aml_value *res);
-int			aml_evalterm(struct aml_scope *scope,
-			    struct aml_value *raw, struct aml_value *dst);
 
 struct aml_opcode	*aml_findopcode(int);
 

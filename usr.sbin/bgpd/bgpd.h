@@ -1,4 +1,4 @@
-/*	$OpenBSD: bgpd.h,v 1.491 2024/04/09 12:09:19 claudio Exp $ */
+/*	$OpenBSD: bgpd.h,v 1.493 2024/05/18 11:17:30 jsg Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -479,7 +479,6 @@ struct peer_config {
 	uint8_t			 distance;	/* 1 = direct, >1 = multihop */
 	uint8_t			 passive;
 	uint8_t			 down;
-	uint8_t			 announce_capa;
 	uint8_t			 reflector_client;
 	uint8_t			 ttlsec;	/* TTL security hack */
 	uint8_t			 flags;
@@ -1471,7 +1470,6 @@ void		 log_peer_warnx(const struct peer_config *, const char *, ...)
 			__attribute__((__format__ (printf, 2, 3)));
 
 /* mrt.c */
-void		 mrt_clear_seq(void);
 void		 mrt_write(struct mrt *);
 void		 mrt_clean(struct mrt *);
 void		 mrt_init(struct imsgbuf *, struct imsgbuf *);
@@ -1482,10 +1480,6 @@ struct mrt	*mrt_get(struct mrt_head *, struct mrt *);
 void		 mrt_mergeconfig(struct mrt_head *, struct mrt_head *);
 
 /* name2id.c */
-uint16_t	 rib_name2id(const char *);
-const char	*rib_id2name(uint16_t);
-void		 rib_unref(uint16_t);
-void		 rib_ref(uint16_t);
 uint16_t	 rtlabel_name2id(const char *);
 const char	*rtlabel_id2name(uint16_t);
 void		 rtlabel_unref(uint16_t);

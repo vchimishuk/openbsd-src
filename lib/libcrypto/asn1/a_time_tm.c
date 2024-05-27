@@ -1,4 +1,4 @@
-/* $OpenBSD: a_time_tm.c,v 1.38 2024/04/11 06:49:19 tb Exp $ */
+/* $OpenBSD: a_time_tm.c,v 1.42 2024/05/03 18:33:27 tb Exp $ */
 /*
  * Copyright (c) 2015 Bob Beck <beck@openbsd.org>
  *
@@ -88,9 +88,6 @@ tm_to_gentime(struct tm *tm, ASN1_TIME *atime)
 		return 0;
 	}
 
-	if (atime == NULL)
-		return 1;
-
 	if (asprintf(&time_str, "%04u%02u%02u%02u%02u%02uZ", tm->tm_year + 1900,
 	    tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min,
 	    tm->tm_sec) == -1) {
@@ -116,9 +113,6 @@ tm_to_utctime(struct tm *tm, ASN1_TIME *atime)
 		ASN1error(ASN1_R_ILLEGAL_TIME_VALUE);
 		return 0;
 	}
-
-	if (atime == NULL)
-		return 1;
 
 	if (asprintf(&time_str, "%02u%02u%02u%02u%02u%02uZ",
 	    tm->tm_year % 100,  tm->tm_mon + 1, tm->tm_mday,
@@ -293,7 +287,6 @@ asn1_time_parse_cbs(const CBS *cbs, int is_gentime, struct tm *out_tm)
 int
 ASN1_time_parse(const char *bytes, size_t len, struct tm *tm, int mode)
 {
-	struct tm tml, *tmp = tm ? tm : &tml;
 	int type = 0;
 	CBS cbs;
 
@@ -306,7 +299,7 @@ ASN1_time_parse(const char *bytes, size_t len, struct tm *tm, int mode)
 		type = V_ASN1_UTCTIME;
 	if (CBS_len(&cbs) == GENTIME_LENGTH)
 		type = V_ASN1_GENERALIZEDTIME;
-	if (asn1_time_parse_cbs(&cbs, type == V_ASN1_GENERALIZEDTIME, tmp)) {
+	if (asn1_time_parse_cbs(&cbs, type == V_ASN1_GENERALIZEDTIME, tm)) {
 		if (mode != 0 && mode != type)
 			return -1;
 		return type;
@@ -323,15 +316,19 @@ static int
 ASN1_TIME_set_string_internal(ASN1_TIME *s, const char *str, int mode)
 {
 	struct tm tm;
-	int type;
 
-	if ((type = ASN1_time_parse(str, strlen(str), &tm, mode)) == -1)
+	if (ASN1_time_parse(str, strlen(str), &tm, mode) == -1)
 		return 0;
+
+	/* Only check str's format, as documented. */
+	if (s == NULL)
+		return 1;
+
 	switch (mode) {
 	case V_ASN1_UTCTIME:
-		return type == mode && tm_to_utctime(&tm, s);
+		return tm_to_utctime(&tm, s);
 	case V_ASN1_GENERALIZEDTIME:
-		return type == mode && tm_to_gentime(&tm, s);
+		return tm_to_gentime(&tm, s);
 	case RFC5280:
 		return tm_to_rfc5280_time(&tm, s);
 	default:

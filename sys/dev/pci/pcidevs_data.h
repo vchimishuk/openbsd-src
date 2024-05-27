@@ -2,7 +2,7 @@
  * THIS FILE AUTOMATICALLY GENERATED.  DO NOT EDIT.
  *
  * generated from:
- *	OpenBSD: pcidevs,v 1.2073 2024/04/09 01:22:19 jsg Exp 
+ *	OpenBSD: pcidevs,v 1.2075 2024/05/21 07:03:55 jsg Exp 
  */
 
 /*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
@@ -2912,12 +2912,12 @@ static const struct pci_known_product pci_known_products[] = {
 	    "AQC111",
 	},
 	{
-	    PCI_VENDOR_AQUANTIA, PCI_PRODUCT_AQUANTIA_AQC112,
-	    "AQC112",
-	},
-	{
 	    PCI_VENDOR_AQUANTIA, PCI_PRODUCT_AQUANTIA_AQC116C,
 	    "AQC116C",
+	},
+	{
+	    PCI_VENDOR_AQUANTIA, PCI_PRODUCT_AQUANTIA_AQC112,
+	    "AQC112",
 	},
 	{
 	    PCI_VENDOR_AQUANTIA, PCI_PRODUCT_AQUANTIA_AQC115C,
@@ -3436,12 +3436,12 @@ static const struct pci_known_product pci_known_products[] = {
 	    "Mendocino",
 	},
 	{
-	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_PHOENIX,
+	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_PHOENIX_1,
 	    "Phoenix",
 	},
 	{
-	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_PHOENIX2,
-	    "Phoenix 2",
+	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_PHOENIX_2,
+	    "Phoenix",
 	},
 	{
 	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_PICASSO,
@@ -3498,6 +3498,14 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_RADEON_HD6500D_HDA,
 	    "Radeon HD 6500D HD Audio",
+	},
+	{
+	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_HAWK_POINT_1,
+	    "Hawk Point",
+	},
+	{
+	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_HAWK_POINT_2,
+	    "Hawk Point",
 	},
 	{
 	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_RADEON_M241P,
@@ -27328,6 +27336,10 @@ static const struct pci_known_product pci_known_products[] = {
 	    "MT7921K",
 	},
 	{
+	    PCI_VENDOR_MEDIATEK, PCI_PRODUCT_MEDIATEK_MT7922,
+	    "MT7922",
+	},
+	{
 	    PCI_VENDOR_MEDIATEK, PCI_PRODUCT_MEDIATEK_MT7921,
 	    "MT7921",
 	},
@@ -31760,20 +31772,20 @@ static const struct pci_known_product pci_known_products[] = {
 	    "8852AE-VT",
 	},
 	{
-	    PCI_VENDOR_REALTEK, PCI_PRODUCT_REALTEK_RTL8852BE,
-	    "8852BE",
-	},
-	{
-	    PCI_VENDOR_REALTEK, PCI_PRODUCT_REALTEK_RTL8852BE_2,
-	    "8852BE",
-	},
-	{
 	    PCI_VENDOR_REALTEK, PCI_PRODUCT_REALTEK_RTL8723BE,
 	    "8723BE",
 	},
 	{
 	    PCI_VENDOR_REALTEK, PCI_PRODUCT_REALTEK_RTL8822BE,
 	    "8822BE",
+	},
+	{
+	    PCI_VENDOR_REALTEK, PCI_PRODUCT_REALTEK_RTL8852BE,
+	    "8852BE",
+	},
+	{
+	    PCI_VENDOR_REALTEK, PCI_PRODUCT_REALTEK_RTL8852BE_2,
+	    "8852BE",
 	},
 	{
 	    PCI_VENDOR_REALTEK, PCI_PRODUCT_REALTEK_RTL8821CE,
@@ -33612,6 +33624,10 @@ static const struct pci_known_product pci_known_products[] = {
 	    "63C815",
 	},
 	{
+	    PCI_VENDOR_SYMBIOS, PCI_PRODUCT_SYMBIOS_1030R,
+	    "53c1030R",
+	},
+	{
 	    PCI_VENDOR_SYMBIOS, PCI_PRODUCT_SYMBIOS_MEGARAID_39XX,
 	    "MegaRAID SAS39XX",
 	},
@@ -33626,10 +33642,6 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_SYMBIOS, PCI_PRODUCT_SYMBIOS_MEGARAID_38XX_2,
 	    "MegaRAID SAS38XX",
-	},
-	{
-	    PCI_VENDOR_SYMBIOS, PCI_PRODUCT_SYMBIOS_1030R,
-	    "53c1030R",
 	},
 	{
 	    PCI_VENDOR_SYMBIOS, PCI_PRODUCT_SYMBIOS_MEGARAID,
@@ -35820,6 +35832,14 @@ static const struct pci_known_product pci_known_products[] = {
 	    "ICP",
 	},
 	{
+	    PCI_VENDOR_WANGXUN, PCI_PRODUCT_WANGXUN_WX1860A2,
+	    "WX1860A2",
+	},
+	{
+	    PCI_VENDOR_WANGXUN, PCI_PRODUCT_WANGXUN_WX1860AL1,
+	    "WX1860AL1",
+	},
+	{
 	    PCI_VENDOR_WCH, PCI_PRODUCT_WCH_CH352,
 	    "CH352",
 	},
@@ -35834,14 +35854,6 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_WCH2, PCI_PRODUCT_WCH2_CH382_1,
 	    "CH382",
-	},
-	{
-	    PCI_VENDOR_WANGXUN, PCI_PRODUCT_WANGXUN_WX1860A2,
-	    "WX1860A2",
-	},
-	{
-	    PCI_VENDOR_WANGXUN, PCI_PRODUCT_WANGXUN_WX1860AL1,
-	    "WX1860AL1",
 	},
 	{
 	    PCI_VENDOR_WD, PCI_PRODUCT_WD_WD33C193A,

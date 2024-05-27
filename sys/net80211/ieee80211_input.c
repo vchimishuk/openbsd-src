@@ -1,4 +1,4 @@
-/*	$OpenBSD: ieee80211_input.c,v 1.252 2024/04/13 23:44:11 jsg Exp $	*/
+/*	$OpenBSD: ieee80211_input.c,v 1.254 2024/05/23 11:19:13 stsp Exp $	*/
 /*	$NetBSD: ieee80211_input.c,v 1.24 2004/05/31 11:12:24 dyoung Exp $	*/
 
 /*-
@@ -75,7 +75,6 @@ void	ieee80211_ba_move_window(struct ieee80211com *,
 	    struct ieee80211_node *, u_int8_t, u_int16_t, struct mbuf_list *);
 void	ieee80211_input_ba_seq(struct ieee80211com *,
 	    struct ieee80211_node *, uint8_t, uint16_t, struct mbuf_list *);
-struct	mbuf *ieee80211_align_mbuf(struct mbuf *);
 void	ieee80211_decap(struct ieee80211com *, struct mbuf *,
 	    struct ieee80211_node *, int, struct mbuf_list *);
 int	ieee80211_amsdu_decap_validate(struct ieee80211com *, struct mbuf *,
@@ -190,8 +189,10 @@ ieee80211_input_hwdecrypt(struct ieee80211com *ic, struct ieee80211_node *ni,
 			 */
 			break;
 		}
-		if (ieee80211_ccmp_get_pn(&pn, &prsc, m, k) != 0)
+		if (ieee80211_ccmp_get_pn(&pn, &prsc, m, k) != 0) {
+			ic->ic_stats.is_ccmp_dec_errs++;
 			return NULL;
+		}
 		if (rxi->rxi_flags & IEEE80211_RXI_HWDEC_SAME_PN) {
 			if (pn < *prsc) {
 				ic->ic_stats.is_ccmp_replays++;

@@ -1,4 +1,4 @@
-/*	$OpenBSD: uvm_pmemrange.c,v 1.64 2024/04/17 13:12:58 mpi Exp $	*/
+/*	$OpenBSD: uvm_pmemrange.c,v 1.66 2024/05/01 12:54:27 mpi Exp $	*/
 
 /*
  * Copyright (c) 2024 Martin Pieuchot <mpi@openbsd.org>
@@ -2223,6 +2223,7 @@ uvm_pmr_cache_alloc(struct uvm_pmr_cache_item *upci)
 	int flags = UVM_PLA_NOWAIT|UVM_PLA_NOWAKE;
 	int npages = UVM_PMR_CACHEMAGSZ;
 
+	splassert(IPL_VM);
 	KASSERT(upci->upci_npages == 0);
 
 	TAILQ_INIT(&pgl);
@@ -2245,7 +2246,9 @@ uvm_pmr_cache_get(int flags)
 	struct uvm_pmr_cache *upc = &curcpu()->ci_uvm;
 	struct uvm_pmr_cache_item *upci;
 	struct vm_page *pg;
+	int s;
 
+	s = splvm();
 	upci = &upc->upc_magz[upc->upc_actv];
 	if (upci->upci_npages == 0) {
 		unsigned int prev;
@@ -2254,8 +2257,10 @@ uvm_pmr_cache_get(int flags)
 		upci = &upc->upc_magz[prev];
 		if (upci->upci_npages == 0) {
 			atomic_inc_int(&uvmexp.pcpmiss);
-			if (uvm_pmr_cache_alloc(upci))
+			if (uvm_pmr_cache_alloc(upci)) {
+				splx(s);
 				return uvm_pmr_getone(flags);
+			}
 		}
 		/* Swap magazines */
 		upc->upc_actv = prev;
@@ -2266,6 +2271,7 @@ uvm_pmr_cache_get(int flags)
 	atomic_dec_int(&uvmexp.percpucaches);
 	upci->upci_npages--;
 	pg = upci->upci_pages[upci->upci_npages];
+	splx(s);
 
 	if (flags & UVM_PLA_ZERO)
 		uvm_pagezero(pg);
@@ -2278,6 +2284,8 @@ uvm_pmr_cache_free(struct uvm_pmr_cache_item *upci)
 {
 	struct pglist pgl;
 	unsigned int i;
+
+	splassert(IPL_VM);
 
 	TAILQ_INIT(&pgl);
 	for (i = 0; i < upci->upci_npages; i++)
@@ -2295,7 +2303,9 @@ uvm_pmr_cache_put(struct vm_page *pg)
 {
 	struct uvm_pmr_cache *upc = &curcpu()->ci_uvm;
 	struct uvm_pmr_cache_item *upci;
+	int s;
 
+	s = splvm();
 	upci = &upc->upc_magz[upc->upc_actv];
 	if (upci->upci_npages >= UVM_PMR_CACHEMAGSZ) {
 		unsigned int prev;
@@ -2313,15 +2323,19 @@ uvm_pmr_cache_put(struct vm_page *pg)
 	upci->upci_pages[upci->upci_npages] = pg;
 	upci->upci_npages++;
 	atomic_inc_int(&uvmexp.percpucaches);
+	splx(s);
 }
 
 void
 uvm_pmr_cache_drain(void)
 {
 	struct uvm_pmr_cache *upc = &curcpu()->ci_uvm;
+	int s;
 
+	s = splvm();
 	uvm_pmr_cache_free(&upc->upc_magz[0]);
 	uvm_pmr_cache_free(&upc->upc_magz[1]);
+	splx(s);
 }
 
 #else /* !(MULTIPROCESSOR && __HAVE_UVM_PERCPU) */

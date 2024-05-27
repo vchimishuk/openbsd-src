@@ -336,6 +336,7 @@
 ./usr/include/dev/ic/nec765reg.h
 ./usr/include/dev/ic/ns16450reg.h
 ./usr/include/dev/ic/ns16550reg.h
+./usr/include/dev/ic/nvmeio.h
 ./usr/include/dev/ic/nvmereg.h
 ./usr/include/dev/ic/nvmevar.h
 ./usr/include/dev/ic/oosiopreg.h
@@ -485,7 +486,6 @@
 ./usr/include/dev/mii/tlphyvar.h
 ./usr/include/dev/mii/tqphyreg.h
 ./usr/include/dev/mii/urlphyreg.h
-./usr/include/dev/mii/xmphyreg.h
 ./usr/include/dev/mulaw.h
 ./usr/include/dev/ofw
 ./usr/include/dev/ofw/fdt.h
@@ -638,7 +638,6 @@
 ./usr/include/dev/pci/pciide_jmicron_reg.h
 ./usr/include/dev/pci/pciide_natsemi_reg.h
 ./usr/include/dev/pci/pciide_nforce_reg.h
-./usr/include/dev/pci/pciide_opti_reg.h
 ./usr/include/dev/pci/pciide_pdc202xx_reg.h
 ./usr/include/dev/pci/pciide_piix_reg.h
 ./usr/include/dev/pci/pciide_rdc_reg.h
@@ -1147,7 +1146,6 @@
 ./usr/include/openssl/opensslv.h
 ./usr/include/openssl/ossl_typ.h
 ./usr/include/openssl/pem.h
-./usr/include/openssl/pem2.h
 ./usr/include/openssl/pkcs12.h
 ./usr/include/openssl/pkcs7.h
 ./usr/include/openssl/poly1305.h
@@ -1449,7 +1447,6 @@
 ./usr/include/ufs/ffs
 ./usr/include/ufs/ffs/ffs_extern.h
 ./usr/include/ufs/ffs/fs.h
-./usr/include/ufs/ffs/softdep.h
 ./usr/include/ufs/mfs
 ./usr/include/ufs/mfs/mfs_extern.h
 ./usr/include/ufs/mfs/mfsnode.h
@@ -1485,6 +1482,7 @@
 ./usr/include/uvm/uvm_page.h
 ./usr/include/uvm/uvm_pager.h
 ./usr/include/uvm/uvm_param.h
+./usr/include/uvm/uvm_percpu.h
 ./usr/include/uvm/uvm_pmap.h
 ./usr/include/uvm/uvm_pmemrange.h
 ./usr/include/uvm/uvm_swap.h
@@ -2184,6 +2182,7 @@
 ./usr/share/man/man3/UI_get_string_type.3
 ./usr/share/man/man3/UI_new.3
 ./usr/share/man/man3/X25519.3
+./usr/share/man/man3/X509V3_EXT_get_nid.3
 ./usr/share/man/man3/X509V3_EXT_print.3
 ./usr/share/man/man3/X509V3_extensions_print.3
 ./usr/share/man/man3/X509V3_get_d2i.3

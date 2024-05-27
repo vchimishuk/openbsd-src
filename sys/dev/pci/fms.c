@@ -1,4 +1,4 @@
-/*	$OpenBSD: fms.c,v 1.36 2022/10/26 20:19:08 kn Exp $ */
+/*	$OpenBSD: fms.c,v 1.38 2024/05/24 06:02:53 jsg Exp $ */
 /*	$NetBSD: fms.c,v 1.5.4.1 2000/06/30 16:27:50 simonb Exp $	*/
 
 /*-
@@ -38,7 +38,6 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/device.h>
 #include <sys/audioio.h>
@@ -121,7 +120,6 @@ void	fms_reset_codec(void *);
 
 int	fms_allocmem(struct fms_softc *, size_t, size_t,
 			  struct fms_dma *);
-int	fms_freemem(struct fms_softc *, struct fms_dma *);
 
 int
 fms_match(struct device *parent, void *match, void *aux)

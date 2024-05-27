@@ -1,4 +1,4 @@
-/*	$OpenBSD: ufshci_pci.c,v 1.2 2024/04/10 10:40:27 mglocker Exp $ */
+/*	$OpenBSD: ufshci_pci.c,v 1.4 2024/05/24 09:51:13 mglocker Exp $ */
 
 /*
  * Copyright (c) 2024 Marcus Glocker <mglocker@openbsd.org>
@@ -47,7 +47,8 @@ const struct cfattach ufshci_pci_ca = {
 	sizeof(struct ufshci_pci_softc),
 	ufshci_pci_match,
 	ufshci_pci_attach,
-	ufshci_pci_detach
+	ufshci_pci_detach,
+	ufshci_pci_activate
 };
 
 int
@@ -106,4 +107,12 @@ int
 ufshci_pci_detach(struct device *self, int flags)
 {
 	return 0;
+}
+
+int
+ufshci_pci_activate(struct device *self, int act)
+{
+	struct ufshci_pci_softc *psc = (struct ufshci_pci_softc *)self;
+
+	return ufshci_activate(&psc->psc_ufshci, act);
 }

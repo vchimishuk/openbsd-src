@@ -1,4 +1,4 @@
-/*	$OpenBSD: uvmexp.h,v 1.13 2024/04/17 13:12:58 mpi Exp $	*/
+/*	$OpenBSD: uvmexp.h,v 1.15 2024/05/01 12:54:27 mpi Exp $	*/
 
 #ifndef	_UVM_UVMEXP_
 #define	_UVM_UVMEXP_

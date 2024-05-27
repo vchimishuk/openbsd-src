@@ -1,4 +1,4 @@
-/*	$OpenBSD: in_pcb.c,v 1.300 2024/04/12 16:07:09 bluhm Exp $	*/
+/*	$OpenBSD: in_pcb.c,v 1.302 2024/04/19 10:13:58 bluhm Exp $	*/
 /*	$NetBSD: in_pcb.c,v 1.25 1996/02/13 23:41:53 christos Exp $	*/
 
 /*
@@ -240,10 +240,10 @@ in_pcballoc(struct socket *so, struct inpcbtable *table, int wait)
 	inp->inp_socket = so;
 	refcnt_init_trace(&inp->inp_refcnt, DT_REFCNT_IDX_INPCB);
 	mtx_init(&inp->inp_mtx, IPL_SOFTNET);
-	inp->inp_seclevel[SL_AUTH] = IPSEC_AUTH_LEVEL_DEFAULT;
-	inp->inp_seclevel[SL_ESP_TRANS] = IPSEC_ESP_TRANS_LEVEL_DEFAULT;
-	inp->inp_seclevel[SL_ESP_NETWORK] = IPSEC_ESP_NETWORK_LEVEL_DEFAULT;
-	inp->inp_seclevel[SL_IPCOMP] = IPSEC_IPCOMP_LEVEL_DEFAULT;
+	inp->inp_seclevel.sl_auth = IPSEC_AUTH_LEVEL_DEFAULT;
+	inp->inp_seclevel.sl_esp_trans = IPSEC_ESP_TRANS_LEVEL_DEFAULT;
+	inp->inp_seclevel.sl_esp_network = IPSEC_ESP_NETWORK_LEVEL_DEFAULT;
+	inp->inp_seclevel.sl_ipcomp = IPSEC_IPCOMP_LEVEL_DEFAULT;
 	inp->inp_rtableid = curproc->p_p->ps_rtableid;
 	inp->inp_hops = -1;
 #ifdef INET6
@@ -592,7 +592,6 @@ in_pcbdetach(struct inpcb *inp)
 	 * points.
 	 */
 	sofree(so, 1);
-	m_freem(inp->inp_options);
 	if (inp->inp_route.ro_rt) {
 		rtfree(inp->inp_route.ro_rt);
 		inp->inp_route.ro_rt = NULL;
@@ -603,8 +602,10 @@ in_pcbdetach(struct inpcb *inp)
 		ip6_freemoptions(inp->inp_moptions6);
 	} else
 #endif
+	{
+		m_freem(inp->inp_options);
 		ip_freemoptions(inp->inp_moptions);
-
+	}
 #if NPF > 0
 	pf_remove_divert_state(inp);
 	pf_inp_unlink(inp);

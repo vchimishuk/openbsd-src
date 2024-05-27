@@ -1,5 +1,5 @@
 /*	$NetBSD: vmstat.c,v 1.29.4.1 1996/06/05 00:21:05 cgd Exp $	*/
-/*	$OpenBSD: vmstat.c,v 1.156 2024/04/17 13:12:58 mpi Exp $	*/
+/*	$OpenBSD: vmstat.c,v 1.158 2024/05/01 12:54:27 mpi Exp $	*/
 
 /*
  * Copyright (c) 1980, 1986, 1991, 1993

@@ -1,4 +1,4 @@
-/* $OpenBSD: ec_ameth.c,v 1.63 2024/04/17 14:01:33 tb Exp $ */
+/* $OpenBSD: ec_ameth.c,v 1.68 2024/05/10 05:12:03 tb Exp $ */
 /* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2006.
  */
@@ -173,6 +173,7 @@ eckey_from_object(const ASN1_OBJECT *aobj, EC_KEY **out_eckey)
 {
 	int nid;
 
+	EC_KEY_free(*out_eckey);
 	*out_eckey = NULL;
 
 	if ((nid = OBJ_obj2nid(aobj)) == NID_undef)
@@ -206,6 +207,7 @@ eckey_to_params(EC_KEY *eckey, int *out_type, void **out_val)
 static int
 eckey_from_params(int ptype, const void *pval, EC_KEY **out_eckey)
 {
+	EC_KEY_free(*out_eckey);
 	*out_eckey = NULL;
 
 	if (ptype == V_ASN1_SEQUENCE)
@@ -820,35 +822,49 @@ static int
 ecdh_cms_set_shared_info(EVP_PKEY_CTX *pctx, CMS_RecipientInfo *ri)
 {
 	X509_ALGOR *alg, *kekalg = NULL;
+	const ASN1_OBJECT *obj;
+	int nid;
+	const void *parameter;
+	int parameter_type;
 	ASN1_OCTET_STRING *ukm;
 	const unsigned char *p;
 	unsigned char *der = NULL;
 	int plen, keylen;
 	const EVP_CIPHER *kekcipher;
 	EVP_CIPHER_CTX *kekctx;
-	int rv = 0;
+	int ret = 0;
 
 	if (!CMS_RecipientInfo_kari_get0_alg(ri, &alg, &ukm))
-		return 0;
+		goto err;
 
-	if (!ecdh_cms_set_kdf_param(pctx, OBJ_obj2nid(alg->algorithm))) {
+	X509_ALGOR_get0(&obj, &parameter_type, &parameter, alg);
+
+	if ((nid = OBJ_obj2nid(obj)) == NID_undef)
+		goto err;
+	if (!ecdh_cms_set_kdf_param(pctx, nid)) {
 		ECerror(EC_R_KDF_PARAMETER_ERROR);
-		return 0;
+		goto err;
 	}
 
-	if (alg->parameter->type != V_ASN1_SEQUENCE)
-		return 0;
+	if (parameter_type != V_ASN1_SEQUENCE)
+		goto err;
+	if ((p = ASN1_STRING_get0_data(parameter)) == NULL)
+		goto err;
+	plen = ASN1_STRING_length(parameter);
+	if ((kekalg = d2i_X509_ALGOR(NULL, &p, plen)) == NULL)
+		goto err;
 
-	p = alg->parameter->value.sequence->data;
-	plen = alg->parameter->value.sequence->length;
-	kekalg = d2i_X509_ALGOR(NULL, &p, plen);
-	if (!kekalg)
+	/*
+	 * XXX - the reaching into kekalg below is ugly, but unfortunately the
+	 * now internal legacy EVP_CIPHER_asn1_to_param() API doesn't interact
+	 * nicely with the X509_ALGOR API.
+	 */
+
+	if ((kekctx = CMS_RecipientInfo_kari_get0_ctx(ri)) == NULL)
 		goto err;
-	kekctx = CMS_RecipientInfo_kari_get0_ctx(ri);
-	if (!kekctx)
+	if ((kekcipher = EVP_get_cipherbyobj(kekalg->algorithm)) == NULL)
 		goto err;
-	kekcipher = EVP_get_cipherbyobj(kekalg->algorithm);
-	if (!kekcipher || EVP_CIPHER_mode(kekcipher) != EVP_CIPH_WRAP_MODE)
+	if (EVP_CIPHER_mode(kekcipher) != EVP_CIPH_WRAP_MODE)
 		goto err;
 	if (!EVP_EncryptInit_ex(kekctx, kekcipher, NULL, NULL, NULL))
 		goto err;
@@ -859,19 +875,20 @@ ecdh_cms_set_shared_info(EVP_PKEY_CTX *pctx, CMS_RecipientInfo *ri)
 	if (EVP_PKEY_CTX_set_ecdh_kdf_outlen(pctx, keylen) <= 0)
 		goto err;
 
-	plen = CMS_SharedInfo_encode(&der, kekalg, ukm, keylen);
-	if (plen <= 0)
+	if ((plen = CMS_SharedInfo_encode(&der, kekalg, ukm, keylen)) <= 0)
 		goto err;
 
 	if (EVP_PKEY_CTX_set0_ecdh_kdf_ukm(pctx, der, plen) <= 0)
 		goto err;
 	der = NULL;
 
-	rv = 1;
+	ret = 1;
+
  err:
 	X509_ALGOR_free(kekalg);
 	free(der);
-	return rv;
+
+	return ret;
 }
 
 static int
@@ -990,7 +1007,7 @@ ecdh_cms_encrypt(CMS_RecipientInfo *ri)
 	 * Package wrap algorithm in an AlgorithmIdentifier.
 	 *
 	 * Incompatibility of X509_ALGOR_set0() with EVP_CIPHER_param_to_asn1()
-	 * makes this really gross.
+	 * makes this really gross. See the XXX in ecdh_cms_set_shared_info().
 	 */
 
 	if ((wrap_alg = X509_ALGOR_new()) == NULL)

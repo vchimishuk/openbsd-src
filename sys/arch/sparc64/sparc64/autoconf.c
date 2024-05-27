@@ -1,4 +1,4 @@
-/*	$OpenBSD: autoconf.c,v 1.149 2024/04/14 19:08:09 miod Exp $	*/
+/*	$OpenBSD: autoconf.c,v 1.151 2024/05/17 20:05:08 miod Exp $	*/
 /*	$NetBSD: autoconf.c,v 1.51 2001/07/24 19:32:11 eeh Exp $ */
 
 /*
@@ -137,8 +137,6 @@ void bootpath_nodes(struct bootpath *, int);
 
 struct openbsd_bootdata obd __attribute__((section(".openbsd.bootdata")));
 
-int bus_class(struct device *);
-int instance_match(struct device *, void *, struct bootpath *bp);
 void nail_bootdev(struct device *, struct bootpath *);
 
 /* Global interrupt mappings for all device types.  Match against the OBP
@@ -1305,7 +1303,7 @@ callrom(void)
  * find a device matching "name" and unit number
  */
 struct device *
-getdevunit(char *name, int unit)
+getdevunit(const char *name, int unit)
 {
 	struct device *dev = TAILQ_FIRST(&alldevs);
 	char num[10], fullname[16];

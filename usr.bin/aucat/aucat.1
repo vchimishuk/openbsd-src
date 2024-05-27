@@ -1,4 +1,4 @@
-.\"	$OpenBSD: aucat.1,v 1.120 2024/03/20 08:42:11 ratchov Exp $
+.\"	$OpenBSD: aucat.1,v 1.123 2024/05/21 05:09:29 ratchov Exp $
 .\"
 .\" Copyright (c) 2006 Alexandre Ratchov <alex@caoua.org>
 .\"
@@ -14,7 +14,7 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: March 20 2024 $
+.Dd $Mdocdate: May 21 2024 $
 .Dt AUCAT 1
 .Os
 .Sh NAME
@@ -126,7 +126,7 @@ The position is expressed as the number of samples (at device sample rate).
 Audio file type.
 The following file types are supported:
 .Pp
-.Bl -tag -width auto -compact
+.Bl -tag -width autoX -compact
 .It Cm raw
 Headerless file.
 .It Cm wav
@@ -203,12 +203,12 @@ can be controlled through MIDI
 as follows:
 a MIDI channel is assigned to each stream, and the volume
 is changed using the standard volume controller (number 7).
-.Pp
 The master volume can be changed using the standard master volume
 system exclusive message.
 .Pp
 All audio files are controlled by the following MMC messages:
-.Bl -tag -width relocate -offset indent
+.Pp
+.Bl -tag -width relocateX -offset indent -compact
 .It relocate
 All files are relocated to the requested time position.
 If it is beyond the end of a file, the file is temporarily
@@ -224,26 +224,26 @@ MIDI control is intended to be used together with
 .Xr sndiod 8 .
 For instance, the following command will create two devices:
 the default
-.Va snd/0
+.Va snd/default
 and a MMC-controlled one
-.Va snd/0.mmc :
+.Va snd/default.mmc :
 .Bd -literal -offset indent
 $ sndiod -r 48000 -z 480 -s default -t slave -s mmc
 .Ed
 .Pp
 Programs using
-.Va snd/0
+.Va snd/default
 behave normally, while programs using
-.Va snd/0.mmc
+.Va snd/mmc
 wait for the MMC start signal and start synchronously.
 Then, the following command will play a file on the
-.Va snd/0.mmc
+.Va snd/mmc
 audio device, giving full control to MIDI software or hardware
 connected to the
 .Va midithru/0
 MIDI port:
 .Bd -literal -offset indent
-$ aucat -f snd/0.mmc -q midithru/0 -i file.wav
+$ aucat -f snd/mmc -q midithru/0 -i file.wav
 .Ed
 .Pp
 At this stage,
@@ -253,9 +253,9 @@ actions in the MIDI sequencer, assuming it's configured to
 transmit MMC on
 .Va midithru/0
 and
-.Va snd/0.mmc .
+.Va snd/mmc .
 Furthermore, the MIDI sequencer could be configured to use the
-.Va snd/0.mmc
+.Va snd/mmc
 port as MTC clock source, assured to be synchronous to playback of
 .Pa file.wav .
 .Sh EXAMPLES
