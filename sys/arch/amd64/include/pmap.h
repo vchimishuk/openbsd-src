@@ -1,4 +1,4 @@
-/*	$OpenBSD: pmap.h,v 1.88 2023/12/29 13:23:28 jca Exp $	*/
+/*	$OpenBSD: pmap.h,v 1.90 2024/09/26 13:18:25 dv Exp $	*/
 /*	$NetBSD: pmap.h,v 1.1 2003/04/26 18:39:46 fvdl Exp $	*/
 
 /*
@@ -293,6 +293,7 @@ LIST_HEAD(pmap_head, pmap); /* struct pmap_head: head of a pmap list */
 #define PMAP_TYPE_EPT		2
 #define PMAP_TYPE_RVI		3
 #define pmap_nested(pm) ((pm)->pm_type != PMAP_TYPE_NORMAL)
+#define pmap_is_ept(pm) ((pm)->pm_type == PMAP_TYPE_EPT)
 
 struct pmap {
 	struct mutex pm_mtx;
@@ -320,6 +321,7 @@ struct pmap {
 };
 
 #define PMAP_EFI	PMAP_MD0
+#define PMAP_NOCRYPT	PMAP_MD1
 
 /*
  * MD flags that we use for pmap_enter (in the pa):

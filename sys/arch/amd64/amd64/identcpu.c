@@ -1,4 +1,4 @@
-/*	$OpenBSD: identcpu.c,v 1.143 2024/05/14 01:42:07 guenther Exp $	*/
+/*	$OpenBSD: identcpu.c,v 1.148 2024/10/07 20:30:17 dv Exp $	*/
 /*	$NetBSD: identcpu.c,v 1.1 2003/04/26 18:39:28 fvdl Exp $	*/
 
 /*
@@ -66,6 +66,7 @@ char cpu_model[48];
 int cpuspeed;
 
 int amd64_has_xcrypt;
+int amd64_pos_cbit;	/* C bit position for SEV */
 int has_rdrand;
 int has_rdseed;
 
@@ -168,7 +169,7 @@ cpu_hz_update_sensor(void *args)
 		ci->ci_hz_sensor.value = val;
 	}
 
-	atomic_clearbits_int(&curproc->p_flag, P_CPUPEG);
+	sched_unpeg_curproc();
 }
 #endif
 
@@ -695,6 +696,22 @@ identifycpu(struct cpu_info *ci)
 			printf("\n%s: MELTDOWN", ci->ci_dev->dv_xname);
 	}
 
+	/* AMD secure memory encryption and encrypted virtualization features */
+	if (ci->ci_vendor == CPUV_AMD &&
+	    ci->ci_pnfeatset >= CPUID_AMD_SEV_CAP) {
+		CPUID(CPUID_AMD_SEV_CAP, ci->ci_feature_amdsev_eax,
+		    ci->ci_feature_amdsev_ebx, ci->ci_feature_amdsev_ecx,
+		    ci->ci_feature_amdsev_edx);
+		pcpuid3(ci, "8000001F",
+		    'a', CPUID_MEMBER(ci_feature_amdsev_eax),
+		    CPUID_AMDSEV_EAX_BITS,
+		    'c', CPUID_MEMBER(ci_feature_amdsev_ecx),
+		    CPUID_AMDSEV_ECX_BITS,
+		    'd', CPUID_MEMBER(ci_feature_amdsev_edx),
+		    CPUID_AMDSEV_EDX_BITS);
+		amd64_pos_cbit = (ci->ci_feature_amdsev_ebx & 0x3f);
+	}
+
 	printf("\n");
 
 	replacemeltdown();
@@ -727,7 +744,8 @@ identifycpu(struct cpu_info *ci)
 	}
 
 #ifndef SMALL_KERNEL
-	if (CPU_IS_PRIMARY(ci) && (ci->ci_feature_tpmflags & TPM_SENSOR)) {
+	if (CPU_IS_PRIMARY(ci) && (ci->ci_feature_tpmflags & TPM_SENSOR) &&
+	    ci->ci_vendor == CPUV_INTEL) {
 		ci->ci_sensor.type = SENSOR_TEMP;
 		sensor_task_register(ci, intelcore_update_sensor, 5);
 		sensor_attach(&ci->ci_sensordev, &ci->ci_sensor);
@@ -934,11 +952,6 @@ cpu_check_vmm_cap(struct cpu_info *ci)
 			/* EPT available? */
 			if (msr & (IA32_VMX_ENABLE_EPT) << 32)
 				ci->ci_vmm_flags |= CI_VMM_EPT;
-			/* VM Functions available? */
-			if (msr & (IA32_VMX_ENABLE_VM_FUNCTIONS) << 32) {
-				ci->ci_vmm_cap.vcc_vmx.vmx_vm_func =
-				    rdmsr(IA32_VMX_VMFUNC);
-			}
 		}
 	}
 

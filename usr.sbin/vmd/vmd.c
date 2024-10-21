@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmd.c,v 1.157 2024/05/18 06:45:00 jsg Exp $	*/
+/*	$OpenBSD: vmd.c,v 1.161 2024/09/26 01:45:13 jsg Exp $	*/
 
 /*
  * Copyright (c) 2015 Reyk Floeter <reyk@openbsd.org>
@@ -18,7 +18,6 @@
 
 #include <sys/types.h>
 #include <sys/queue.h>
-#include <sys/wait.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/tty.h>
@@ -28,7 +27,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <termios.h>
 #include <errno.h>
 #include <event.h>
 #include <fcntl.h>
@@ -40,8 +38,7 @@
 #include <ctype.h>
 #include <grp.h>
 
-#include <machine/specialreg.h>
-#include <machine/vmmvar.h>
+#include <dev/vmm/vmm.h>
 
 #include "proc.h"
 #include "atomicio.h"
@@ -613,134 +610,6 @@ vmd_dispatch_priv(int fd, struct privsep_proc *p, struct imsg *imsg)
 	return (0);
 }
 
-int
-vmd_check_vmh(struct vm_dump_header *vmh)
-{
-	int i;
-	unsigned int code, leaf;
-	unsigned int a, b, c, d;
-
-	if (strncmp(vmh->vmh_signature, VM_DUMP_SIGNATURE, strlen(VM_DUMP_SIGNATURE)) != 0) {
-		log_warnx("%s: incompatible dump signature", __func__);
-		return (-1);
-	}
-
-	if (vmh->vmh_version != VM_DUMP_VERSION) {
-		log_warnx("%s: incompatible dump version", __func__);
-		return (-1);
-	}
-
-	for (i = 0; i < VM_DUMP_HEADER_CPUID_COUNT; i++) {
-		code = vmh->vmh_cpuids[i].code;
-		leaf = vmh->vmh_cpuids[i].leaf;
-		if (leaf != 0x00) {
-			log_debug("%s: invalid leaf 0x%x for code 0x%x",
-			    __func__, leaf, code);
-			return (-1);
-		}
-
-		switch (code) {
-		case 0x00:
-			CPUID_LEAF(code, leaf, a, b, c, d);
-			if (vmh->vmh_cpuids[i].a > a) {
-				log_debug("%s: incompatible cpuid level",
-				    __func__);
-				return (-1);
-			}
-			if (!(vmh->vmh_cpuids[i].b == b &&
-			    vmh->vmh_cpuids[i].c == c &&
-			    vmh->vmh_cpuids[i].d == d)) {
-				log_debug("%s: incompatible cpu brand",
-				    __func__);
-				return (-1);
-			}
-			break;
-
-		case 0x01:
-			CPUID_LEAF(code, leaf, a, b, c, d);
-			if ((vmh->vmh_cpuids[i].c & c & VMM_CPUIDECX_MASK) !=
-			    (vmh->vmh_cpuids[i].c & VMM_CPUIDECX_MASK)) {
-				log_debug("%s: incompatible cpu features "
-				    "code: 0x%x leaf: 0x%x  reg: c", __func__,
-				    code, leaf);
-				return (-1);
-			}
-			if ((vmh->vmh_cpuids[i].d & d & VMM_CPUIDEDX_MASK) !=
-			    (vmh->vmh_cpuids[i].d & VMM_CPUIDEDX_MASK)) {
-				log_debug("%s: incompatible cpu features "
-				    "code: 0x%x leaf: 0x%x  reg: d", __func__,
-				    code, leaf);
-				return (-1);
-			}
-			break;
-
-		case 0x07:
-			CPUID_LEAF(code, leaf, a, b, c, d);
-			if ((vmh->vmh_cpuids[i].b & b & VMM_SEFF0EBX_MASK) !=
-			    (vmh->vmh_cpuids[i].b & VMM_SEFF0EBX_MASK)) {
-				log_debug("%s: incompatible cpu features "
-				    "code: 0x%x leaf: 0x%x  reg: c", __func__,
-				    code, leaf);
-				return (-1);
-			}
-			if ((vmh->vmh_cpuids[i].c & c & VMM_SEFF0ECX_MASK) !=
-			    (vmh->vmh_cpuids[i].c & VMM_SEFF0ECX_MASK)) {
-				log_debug("%s: incompatible cpu features "
-				    "code: 0x%x leaf: 0x%x  reg: d", __func__,
-				    code, leaf);
-				return (-1);
-			}
-			break;
-
-		case 0x0d:
-			CPUID_LEAF(code, leaf, a, b, c, d);
-			if (vmh->vmh_cpuids[i].b > b) {
-				log_debug("%s: incompatible cpu: insufficient "
-				    "max save area for enabled XCR0 features",
-				    __func__);
-				return (-1);
-			}
-			if (vmh->vmh_cpuids[i].c > c) {
-				log_debug("%s: incompatible cpu: insufficient "
-				    "max save area for supported XCR0 features",
-				    __func__);
-				return (-1);
-			}
-			break;
-
-		case 0x80000001:
-			CPUID_LEAF(code, leaf, a, b, c, d);
-			if ((vmh->vmh_cpuids[i].a & a) !=
-			    vmh->vmh_cpuids[i].a) {
-				log_debug("%s: incompatible cpu features "
-				    "code: 0x%x leaf: 0x%x  reg: a", __func__,
-				    code, leaf);
-				return (-1);
-			}
-			if ((vmh->vmh_cpuids[i].c & c) !=
-			    vmh->vmh_cpuids[i].c) {
-				log_debug("%s: incompatible cpu features "
-				    "code: 0x%x leaf: 0x%x  reg: c", __func__,
-				    code, leaf);
-				return (-1);
-			}
-			if ((vmh->vmh_cpuids[i].d & d) !=
-			    vmh->vmh_cpuids[i].d) {
-				log_debug("%s: incompatible cpu features "
-				    "code: 0x%x leaf: 0x%x  reg: d", __func__,
-				    code, leaf);
-				return (-1);
-			}
-			break;
-
-		default:
-			log_debug("%s: unknown code 0x%x", __func__, code);
-			return (-1);
-		}
-	}
-
-	return (0);
-}
 
 void
 vmd_sighdlr(int sig, short event, void *arg)
@@ -790,7 +659,7 @@ main(int argc, char **argv)
 	int			 ch;
 	enum privsep_procid	 proc_id = PROC_PARENT;
 	int			 proc_instance = 0, vm_launch = 0;
-	int			 vmm_fd = -1, vm_fd = -1;
+	int			 vmm_fd = -1, vm_fd = -1, psp_fd = -1;
 	const char		*errp, *title = NULL;
 	int			 argc0 = argc;
 	char			 dev_type = '\0';
@@ -802,7 +671,7 @@ main(int argc, char **argv)
 	env->vmd_fd = -1;
 	env->vmd_fd6 = -1;
 
-	while ((ch = getopt(argc, argv, "D:P:I:V:X:df:i:nt:vp:")) != -1) {
+	while ((ch = getopt(argc, argv, "D:P:I:V:X:df:i:j:nt:vp:")) != -1) {
 		switch (ch) {
 		case 'D':
 			if (cmdline_symset(optarg) < 0)
@@ -864,6 +733,12 @@ main(int argc, char **argv)
 			if (errp)
 				fatalx("invalid vmm fd");
 			break;
+		case 'j':
+			/* -1 means no PSP available */
+			psp_fd = strtonum(optarg, -1, 128, &errp);
+			if (errp)
+				fatalx("invalid psp fd");
+			break;
 		default:
 			usage();
 		}
@@ -892,6 +767,7 @@ main(int argc, char **argv)
 
 	ps = &env->vmd_ps;
 	ps->ps_env = env;
+	env->vmd_psp_fd = psp_fd;
 
 	if (config_init(env) == -1)
 		fatal("failed to initialize configuration");
@@ -965,6 +841,12 @@ main(int argc, char **argv)
 
 	if (!env->vmd_noaction)
 		proc_connect(ps);
+
+	if (env->vmd_noaction == 0 && proc_id == PROC_PARENT) {
+		env->vmd_psp_fd = open(PSP_NODE, O_RDWR);
+		if (env->vmd_psp_fd == -1)
+			log_debug("%s: failed to open %s", __func__, PSP_NODE);
+	}
 
 	if (vmd_configure() == -1)
 		fatalx("configuration failed");
@@ -1045,6 +927,12 @@ vmd_configure(void)
 	/* Send VMM device fd to vmm proc. */
 	proc_compose_imsg(&env->vmd_ps, PROC_VMM, -1,
 	    IMSG_VMDOP_RECEIVE_VMM_FD, -1, env->vmd_fd, NULL, 0);
+
+	/* Send PSP device fd to vmm proc. */
+	if (env->vmd_psp_fd != -1) {
+		proc_compose_imsg(&env->vmd_ps, PROC_VMM, -1,
+		    IMSG_VMDOP_RECEIVE_PSP_FD, -1, env->vmd_psp_fd, NULL, 0);
+	}
 
 	/* Send shared global configuration to all children */
 	if (config_setconfig(env) == -1)

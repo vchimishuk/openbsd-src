@@ -1,4 +1,4 @@
-/* $OpenBSD: xhci.c,v 1.131 2024/05/23 03:21:09 jsg Exp $ */
+/* $OpenBSD: xhci.c,v 1.135 2024/10/08 19:42:31 kettenis Exp $ */
 
 /*
  * Copyright (c) 2014-2015 Martin Pieuchot
@@ -79,6 +79,7 @@ struct xhci_pipe {
 };
 
 int	xhci_reset(struct xhci_softc *);
+void	xhci_suspend(struct xhci_softc *);
 int	xhci_intr1(struct xhci_softc *);
 void	xhci_event_dequeue(struct xhci_softc *);
 void	xhci_event_xfer(struct xhci_softc *, uint64_t, uint32_t, uint32_t);
@@ -237,12 +238,12 @@ usbd_dma_contig_alloc(struct usbd_bus *bus, struct usbd_dma_info *dma,
 	dma->size = size;
 
 	error = bus_dmamap_create(dma->tag, size, 1, size, boundary,
-	    BUS_DMA_NOWAIT, &dma->map);
+	    BUS_DMA_NOWAIT | bus->dmaflags, &dma->map);
 	if (error != 0)
 		return (error);
 
 	error = bus_dmamem_alloc(dma->tag, size, alignment, boundary, &dma->seg,
-	    1, &dma->nsegs, BUS_DMA_NOWAIT | BUS_DMA_ZERO);
+	    1, &dma->nsegs, BUS_DMA_NOWAIT | BUS_DMA_ZERO | bus->dmaflags);
 	if (error != 0)
 		goto destroy;
 
@@ -328,6 +329,7 @@ xhci_init(struct xhci_softc *sc)
 
 	hcr = XREAD4(sc, XHCI_HCCPARAMS);
 	sc->sc_ctxsize = XHCI_HCC_CSZ(hcr) ? 64 : 32;
+	sc->sc_bus.dmaflags |= XHCI_HCC_AC64(hcr) ? BUS_DMA_64BIT : 0;
 	DPRINTF(("%s: %d bytes context\n", DEVNAME(sc), sc->sc_ctxsize));
 
 #ifdef XHCI_DEBUG
@@ -414,6 +416,7 @@ xhci_config(struct xhci_softc *sc)
 {
 	uint64_t paddr;
 	uint32_t hcr;
+	int i;
 
 	/* Make sure to program a number of device slots we can handle. */
 	if (sc->sc_noslot > USB_MAX_DEVICES)
@@ -455,6 +458,27 @@ xhci_config(struct xhci_softc *sc)
 
 	DPRINTF(("%s: ERDP=%#x%#x\n", DEVNAME(sc),
 	    XRREAD4(sc, XHCI_ERDP_HI(0)), XRREAD4(sc, XHCI_ERDP_LO(0))));
+
+	/*
+	 * If we successfully saved the state during suspend, restore
+	 * it here.  Otherwise some Intel controllers don't function
+	 * correctly after resume.
+	 */
+	if (sc->sc_saved_state) {
+		XOWRITE4(sc, XHCI_USBCMD, XHCI_CMD_CRS); /* Restore state */
+		hcr = XOREAD4(sc, XHCI_USBSTS);
+		for (i = 0; i < 100; i++) {
+			usb_delay_ms(&sc->sc_bus, 1);
+			hcr = XOREAD4(sc, XHCI_USBSTS) & XHCI_STS_RSS;
+			if (!hcr)
+				break;
+		}
+
+		if (hcr)
+			printf("%s: restore state timeout\n", DEVNAME(sc));
+
+		sc->sc_saved_state = 0;
+	}
 
 	/* Enable interrupts. */
 	hcr = XRREAD4(sc, XHCI_IMAN(0));
@@ -533,7 +557,7 @@ xhci_activate(struct device *self, int act)
 		break;
 	case DVACT_POWERDOWN:
 		rv = config_activate_children(self, act);
-		xhci_reset(sc);
+		xhci_suspend(sc);
 		break;
 	default:
 		rv = config_activate_children(self, act);
@@ -575,6 +599,72 @@ xhci_reset(struct xhci_softc *sc)
 	}
 
 	return (0);
+}
+
+void
+xhci_suspend(struct xhci_softc *sc)
+{
+	uint32_t hcr;
+	int i;
+
+	XOWRITE4(sc, XHCI_USBCMD, 0);	/* Halt controller */
+	for (i = 0; i < 100; i++) {
+		usb_delay_ms(&sc->sc_bus, 1);
+		hcr = XOREAD4(sc, XHCI_USBSTS) & XHCI_STS_HCH;
+		if (hcr)
+			break;
+	}
+
+	if (!hcr) {
+		printf("%s: halt timeout\n", DEVNAME(sc));
+		xhci_reset(sc);
+		return;
+	}
+
+	/*
+	 * Some Intel controllers will not power down completely
+	 * unless they have seen a save state command.  This in turn
+	 * will prevent the SoC from reaching its lowest idle state.
+	 * So save the state here.
+	 */
+	if ((sc->sc_flags & XHCI_NOCSS) == 0) {
+		XOWRITE4(sc, XHCI_USBCMD, XHCI_CMD_CSS); /* Save state */
+		hcr = XOREAD4(sc, XHCI_USBSTS);
+		for (i = 0; i < 100; i++) {
+			usb_delay_ms(&sc->sc_bus, 1);
+			hcr = XOREAD4(sc, XHCI_USBSTS) & XHCI_STS_SSS;
+			if (!hcr)
+				break;
+		}
+
+		if (hcr) {
+			printf("%s: save state timeout\n", DEVNAME(sc));
+			xhci_reset(sc);
+			return;
+		}
+
+		sc->sc_saved_state = 1;
+	}
+
+	/* Disable interrupts. */
+	XRWRITE4(sc, XHCI_IMOD(0), 0);
+	XRWRITE4(sc, XHCI_IMAN(0), 0);
+
+	/* Clear the event ring address. */
+	XRWRITE4(sc, XHCI_ERDP_LO(0), 0);
+	XRWRITE4(sc, XHCI_ERDP_HI(0), 0);
+
+	XRWRITE4(sc, XHCI_ERSTBA_LO(0), 0);
+	XRWRITE4(sc, XHCI_ERSTBA_HI(0), 0);
+
+	XRWRITE4(sc, XHCI_ERSTSZ(0), 0);
+
+	/* Clear the command ring address. */
+	XOWRITE4(sc, XHCI_CRCR_LO, 0);
+	XOWRITE4(sc, XHCI_CRCR_HI, 0);
+
+	XOWRITE4(sc, XHCI_DCBAAP_LO, 0);
+	XOWRITE4(sc, XHCI_DCBAAP_HI, 0);
 }
 
 void

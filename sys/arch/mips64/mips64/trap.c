@@ -1,4 +1,4 @@
-/*	$OpenBSD: trap.c,v 1.171 2024/01/11 19:16:26 miod Exp $	*/
+/*	$OpenBSD: trap.c,v 1.173 2024/10/16 18:40:52 miod Exp $	*/
 
 /*
  * Copyright (c) 1988 University of Utah.
@@ -645,8 +645,8 @@ fault_common_no_miss:
 			sigexit(p, SIGABRT);
 			/* NOTREACHED */
 		} else {
-			signal = SIGEMT; /* Stuff it with something for now */
-			sicode = 0;
+			signal = SIGTRAP;
+			sicode = TRAP_BRKPT;
 		}
 		break;
 	    }
@@ -1230,7 +1230,7 @@ loop:
 			case OP_SYSCALL:
 			case OP_BREAK:
 				more = 1; /* stop now */
-			};
+			}
 			break;
 
 		case OP_BCOND:
@@ -1250,7 +1250,7 @@ loop:
 			switch (i.RType.rs) {
 			case OP_BC:
 				more = 2; /* stop after next instruction */
-			};
+			}
 			break;
 
 		case OP_SD:

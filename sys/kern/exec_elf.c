@@ -1,4 +1,4 @@
-/*	$OpenBSD: exec_elf.c,v 1.186 2024/04/02 08:39:16 deraadt Exp $	*/
+/*	$OpenBSD: exec_elf.c,v 1.191 2024/09/15 23:13:19 deraadt Exp $	*/
 
 /*
  * Copyright (c) 1996 Per Fogelstrom
@@ -89,6 +89,7 @@
 
 #include <machine/reg.h>
 #include <machine/exec.h>
+#include <machine/elf.h>
 
 int	elf_load_file(struct proc *, char *, struct exec_package *,
 	    struct elf_args *);
@@ -310,8 +311,10 @@ elf_read_pintable(struct proc *p, struct vnode *vp, Elf_Phdr *pp,
 	for (i = 0; i < nsyscalls; i++) {
 		if (syscalls[i].sysno <= 0 ||
 		    syscalls[i].sysno >= SYS_MAXSYSCALL ||
-		    syscalls[i].offset > len)
+		    syscalls[i].offset > len) {
+			npins = 0;
 			goto bad;
+		}
 		npins = MAX(npins, syscalls[i].sysno);
 	}
 	if (is_ldso)
@@ -568,8 +571,10 @@ elf_load_file(struct proc *p, char *path, struct exec_package *epp,
 			pr->ps_pin.pn_end = base + len;
 			pr->ps_pin.pn_pins = pins;
 			pr->ps_pin.pn_npins = npins;
-			pr->ps_flags |= PS_PIN;
 		}
+	} else {
+		error = EINVAL;	/* no pin table */
+		goto bad1;
 	}
 
 	vn_marktext(nd.ni_vp);
@@ -866,7 +871,6 @@ exec_elf_makecmds(struct proc *p, struct exec_package *epp)
 			epp->ep_pinend = base + len;
 			epp->ep_pins = pins;
 			epp->ep_npins = npins;
-			p->p_p->ps_flags |= PS_PIN;
 		}
 	}
 
@@ -922,6 +926,14 @@ bad:
 		return (ENOEXEC);
 	return (error);
 }
+
+#ifdef __HAVE_CPU_HWCAP
+unsigned long hwcap;
+#endif /* __HAVE_CPU_HWCAP */
+
+#ifdef __HAVE_CPU_HWCAP2
+unsigned long hwcap2;
+#endif /* __HAVE_CPU_HWCAP2 */
 
 /*
  * Phase II of load. It is now safe to load the interpreter. Info collected
@@ -994,6 +1006,18 @@ exec_elf_fixup(struct proc *p, struct exec_package *epp)
 		a->au_id = AUX_entry;
 		a->au_v = ap->arg_entry;
 		a++;
+
+#ifdef __HAVE_CPU_HWCAP
+		a->au_id = AUX_hwcap;
+		a->au_v = hwcap;
+		a++;
+#endif /* __HAVE_CPU_HWCAP */
+
+#ifdef __HAVE_CPU_HWCAP2
+		a->au_id = AUX_hwcap2;
+		a->au_v = hwcap2;
+		a++;
+#endif /* __HAVE_CPU_HWCAP2 */
 
 		a->au_id = AUX_openbsd_timekeep;
 		a->au_v = p->p_p->ps_timekeep;

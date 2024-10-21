@@ -239,6 +239,7 @@ struct inteldrm_softc {
 	struct i915_dsm dsm;
 
 #ifdef __OpenBSD__
+	struct pci_attach_args *pa;
 	pci_chipset_tag_t pc;
 	pcitag_t tag;
 	struct extent *memex;
@@ -448,11 +449,7 @@ static inline struct drm_i915_private *kdev_to_i915(struct device *kdev)
 
 static inline struct drm_i915_private *pdev_to_i915(struct pci_dev *pdev)
 {
-	STUB();
-	return NULL;
-#ifdef notyet
 	return pci_get_drvdata(pdev);
-#endif
 }
 
 static inline struct intel_gt *to_gt(struct drm_i915_private *i915)

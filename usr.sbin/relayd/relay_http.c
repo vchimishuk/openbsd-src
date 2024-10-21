@@ -1,4 +1,4 @@
-/*	$OpenBSD: relay_http.c,v 1.87 2023/12/01 16:48:40 millert Exp $	*/
+/*	$OpenBSD: relay_http.c,v 1.90 2024/07/20 06:54:15 anton Exp $	*/
 
 /*
  * Copyright (c) 2006 - 2016 Reyk Floeter <reyk@openbsd.org>
@@ -436,16 +436,8 @@ relay_read_http(struct bufferevent *bev, void *arg)
 					    desc->http_lastheader);
 					break;
 				case HTTP_METHOD_RESPONSE:
-					/*
-					 * Strip Content-Length header from
-					 * HEAD responses since there is no
-					 * actual payload in the response.
-					 */
-					if (request_method == HTTP_METHOD_HEAD) {
-						kv_delete(&desc->http_headers,
-						    desc->http_lastheader);
+					if (request_method == HTTP_METHOD_HEAD)
 						break;
-					}
 					/* FALLTHROUGH */
 				default:
 					/*
@@ -1972,7 +1964,6 @@ relay_test(struct protocol *proto, struct ctl_relay_event *cre)
 	struct http_descriptor	*desc = cre->desc;
 	struct relay_rule	*r = NULL, *rule = NULL;
 	struct relay_table	*tbl = NULL;
-	u_int			 cnt = 0;
 	u_int			 action = RES_PASS;
 	struct kvlist		 actions, matches;
 	struct kv		*kv;
@@ -1983,8 +1974,6 @@ relay_test(struct protocol *proto, struct ctl_relay_event *cre)
 
 	r = TAILQ_FIRST(&proto->rules);
 	while (r != NULL) {
-		cnt++;
-
 		TAILQ_INIT(&matches);
 		TAILQ_INIT(&r->rule_kvlist);
 

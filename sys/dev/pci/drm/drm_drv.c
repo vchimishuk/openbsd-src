@@ -47,6 +47,8 @@
 #include <linux/pseudo_fs.h>
 #include <linux/slab.h>
 #include <linux/srcu.h>
+#include <linux/xarray.h>
+#include <linux/suspend.h>
 
 #include <drm/drm_accel.h>
 #include <drm/drm_cache.h>
@@ -69,8 +71,7 @@ MODULE_AUTHOR("Gareth Hughes, Leif Delgass, José Fonseca, Jon Smirl");
 MODULE_DESCRIPTION("DRM shared core routines");
 MODULE_LICENSE("GPL and additional rights");
 
-static DEFINE_SPINLOCK(drm_minor_lock);
-static struct idr drm_minors_idr;
+DEFINE_XARRAY_ALLOC(drm_minors_xa);
 
 /*
  * If the drm core fails to init for whatever reason,
@@ -143,6 +144,18 @@ SPLAY_PROTOTYPE(drm_file_tree, drm_file, link, drm_file_cmp);
  * registered and unregistered dynamically according to device-state.
  */
 
+static struct xarray *drm_minor_get_xa(enum drm_minor_type type)
+{
+	if (type == DRM_MINOR_PRIMARY || type == DRM_MINOR_RENDER)
+		return &drm_minors_xa;
+#if IS_ENABLED(CONFIG_DRM_ACCEL)
+	else if (type == DRM_MINOR_ACCEL)
+		return &accel_minors_xa;
+#endif
+	else
+		return ERR_PTR(-EOPNOTSUPP);
+}
+
 static struct drm_minor **drm_minor_get_slot(struct drm_device *dev,
 					     enum drm_minor_type type)
 {
@@ -161,7 +174,6 @@ static struct drm_minor **drm_minor_get_slot(struct drm_device *dev,
 static void drm_minor_alloc_release(struct drm_device *dev, void *data)
 {
 	struct drm_minor *minor = data;
-	unsigned long flags;
 
 	WARN_ON(dev != minor->dev);
 
@@ -169,19 +181,26 @@ static void drm_minor_alloc_release(struct drm_device *dev, void *data)
 	put_device(minor->kdev);
 #endif
 
-	if (minor->type == DRM_MINOR_ACCEL) {
-		accel_minor_remove(minor->index);
-	} else {
-		spin_lock_irqsave(&drm_minor_lock, flags);
-		idr_remove(&drm_minors_idr, minor->index);
-		spin_unlock_irqrestore(&drm_minor_lock, flags);
-	}
+	xa_erase(drm_minor_get_xa(minor->type), minor->index);
 }
+
+/*
+ * DRM used to support 64 devices, for backwards compatibility we need to maintain the
+ * minor allocation scheme where minors 0-63 are primary nodes, 64-127 are control nodes,
+ * and 128-191 are render nodes.
+ * After reaching the limit, we're allocating minors dynamically - first-come, first-serve.
+ * Accel nodes are using a distinct major, so the minors are allocated in continuous 0-MAX
+ * range.
+ */
+#define DRM_MINOR_LIMIT(t) ({ \
+	typeof(t) _t = (t); \
+	_t == DRM_MINOR_ACCEL ? XA_LIMIT(0, ACCEL_MAX_MINORS) : XA_LIMIT(64 * _t, 64 * _t + 63); \
+})
+#define DRM_EXTENDED_MINOR_LIMIT XA_LIMIT(192, (1 << MINORBITS) - 1)
 
 static int drm_minor_alloc(struct drm_device *dev, enum drm_minor_type type)
 {
 	struct drm_minor *minor;
-	unsigned long flags;
 	int r;
 
 	minor = drmm_kzalloc(dev, sizeof(*minor), GFP_KERNEL);
@@ -191,24 +210,13 @@ static int drm_minor_alloc(struct drm_device *dev, enum drm_minor_type type)
 	minor->type = type;
 	minor->dev = dev;
 
-	idr_preload(GFP_KERNEL);
-	if (type == DRM_MINOR_ACCEL) {
-		r = accel_minor_alloc();
-	} else {
-		spin_lock_irqsave(&drm_minor_lock, flags);
-		r = idr_alloc(&drm_minors_idr,
-			NULL,
-			64 * type,
-			64 * (type + 1),
-			GFP_NOWAIT);
-		spin_unlock_irqrestore(&drm_minor_lock, flags);
-	}
-	idr_preload_end();
-
+	r = xa_alloc(drm_minor_get_xa(type), &minor->index,
+		     NULL, DRM_MINOR_LIMIT(type), GFP_KERNEL);
+	if (r == -EBUSY && (type == DRM_MINOR_PRIMARY || type == DRM_MINOR_RENDER))
+		r = xa_alloc(&drm_minors_xa, &minor->index,
+			     NULL, DRM_EXTENDED_MINOR_LIMIT, GFP_KERNEL);
 	if (r < 0)
 		return r;
-
-	minor->index = r;
 
 	r = drmm_add_action_or_reset(dev, drm_minor_alloc_release, minor);
 	if (r)
@@ -227,10 +235,8 @@ static int drm_minor_alloc(struct drm_device *dev, enum drm_minor_type type)
 static int drm_minor_register(struct drm_device *dev, enum drm_minor_type type)
 {
 	struct drm_minor *minor;
-	unsigned long flags;
-#ifdef __linux__
+	void *entry;
 	int ret;
-#endif
 
 	DRM_DEBUG("\n");
 
@@ -257,28 +263,26 @@ static int drm_minor_register(struct drm_device *dev, enum drm_minor_type type)
 #endif
 
 	/* replace NULL with @minor so lookups will succeed from now on */
-	if (minor->type == DRM_MINOR_ACCEL) {
-		accel_minor_replace(minor, minor->index);
-	} else {
-		spin_lock_irqsave(&drm_minor_lock, flags);
-		idr_replace(&drm_minors_idr, minor, minor->index);
-		spin_unlock_irqrestore(&drm_minor_lock, flags);
+	entry = xa_store(drm_minor_get_xa(type), minor->index, minor, GFP_KERNEL);
+	if (xa_is_err(entry)) {
+		ret = xa_err(entry);
+		goto err_debugfs;
 	}
+	WARN_ON(entry);
 
 	DRM_DEBUG("new minor registered %d\n", minor->index);
 	return 0;
 
-#ifdef __linux__
 err_debugfs:
+#ifdef __linux__
 	drm_debugfs_cleanup(minor);
-	return ret;
 #endif
+	return ret;
 }
 
 static void drm_minor_unregister(struct drm_device *dev, enum drm_minor_type type)
 {
 	struct drm_minor *minor;
-	unsigned long flags;
 
 	minor = *drm_minor_get_slot(dev, type);
 #ifdef __linux__
@@ -289,13 +293,7 @@ static void drm_minor_unregister(struct drm_device *dev, enum drm_minor_type typ
 		return;
 
 	/* replace @minor with NULL so lookups will fail from now on */
-	if (minor->type == DRM_MINOR_ACCEL) {
-		accel_minor_replace(NULL, minor->index);
-	} else {
-		spin_lock_irqsave(&drm_minor_lock, flags);
-		idr_replace(&drm_minors_idr, NULL, minor->index);
-		spin_unlock_irqrestore(&drm_minor_lock, flags);
-	}
+	xa_store(drm_minor_get_xa(type), minor->index, NULL, GFP_KERNEL);
 
 #ifdef __linux__
 	device_del(minor->kdev);
@@ -313,16 +311,15 @@ static void drm_minor_unregister(struct drm_device *dev, enum drm_minor_type typ
  * minor->dev pointer will stay valid! However, the device may get unplugged and
  * unregistered while you hold the minor.
  */
-struct drm_minor *drm_minor_acquire(unsigned int minor_id)
+struct drm_minor *drm_minor_acquire(struct xarray *minor_xa, unsigned int minor_id)
 {
 	struct drm_minor *minor;
-	unsigned long flags;
 
-	spin_lock_irqsave(&drm_minor_lock, flags);
-	minor = idr_find(&drm_minors_idr, minor_id);
+	xa_lock(minor_xa);
+	minor = xa_load(minor_xa, minor_id);
 	if (minor)
 		drm_dev_get(minor->dev);
-	spin_unlock_irqrestore(&drm_minor_lock, flags);
+	xa_unlock(minor_xa);
 
 	if (!minor) {
 		return ERR_PTR(-ENODEV);
@@ -1141,7 +1138,7 @@ static int drm_stub_open(struct inode *inode, struct file *filp)
 
 	DRM_DEBUG("\n");
 
-	minor = drm_minor_acquire(iminor(inode));
+	minor = drm_minor_acquire(&drm_minors_xa, iminor(inode));
 	if (IS_ERR(minor))
 		return PTR_ERR(minor);
 
@@ -1179,7 +1176,7 @@ static void drm_core_exit(void)
 	debugfs_remove(drm_debugfs_root);
 	drm_sysfs_destroy();
 #endif
-	idr_destroy(&drm_minors_idr);
+	WARN_ON(!xa_empty(&drm_minors_xa));
 	drm_connector_ida_destroy();
 }
 
@@ -1190,7 +1187,6 @@ static int __init drm_core_init(void)
 #endif
 
 	drm_connector_ida_init();
-	idr_init(&drm_minors_idr);
 	drm_memcpy_init_early();
 
 #ifdef __linux__
@@ -1406,6 +1402,7 @@ drm_attach(struct device *parent, struct device *self, void *aux)
 		dev->pdev->pc = pa->pa_pc;
 		dev->pdev->tag = pa->pa_tag;
 		dev->pdev->pci = (struct pci_softc *)parent->dv_parent;
+		dev->pdev->_dev = parent;
 
 #ifdef CONFIG_ACPI
 		dev->pdev->dev.node = acpi_find_pci(pa->pa_pc, pa->pa_tag);
@@ -1548,10 +1545,25 @@ drm_activate(struct device *self, int act)
 
 	switch (act) {
 	case DVACT_QUIESCE:
+#ifdef CONFIG_ACPI
+		if (acpi_softc) {
+			switch (acpi_softc->sc_state) {
+			case ACPI_STATE_S0:
+				pm_suspend_target_state = PM_SUSPEND_TO_IDLE;
+				break;
+			case ACPI_STATE_S3:
+				pm_suspend_target_state = PM_SUSPEND_MEM;
+				break;
+			}
+		}
+#else
+		pm_suspend_target_state = PM_SUSPEND_TO_IDLE;
+#endif
 		drm_quiesce(dev);
 		break;
 	case DVACT_WAKEUP:
 		drm_wakeup(dev);
+		pm_suspend_target_state = PM_SUSPEND_ON;
 		break;
 	}
 

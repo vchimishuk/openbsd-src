@@ -608,6 +608,7 @@ daemon
 devname
 dirfd
 dirname
+elf_aux_info
 endfsent
 endgrent
 endnetgrent
@@ -1360,6 +1361,13 @@ xprt_register
 xprt_unregister
 
 /* stdio */
+__fpending
+__freadahead
+__freading
+__freadptr
+__freadptrinc
+__fseterr
+__fwriting
 __sF
 __srget
 __swbuf
@@ -1665,6 +1673,7 @@ wcsncasecmp_l
 wcsncat
 wcsncmp
 wcsncpy
+wcsnlen
 wcspbrk
 wcsrchr
 wcsspn

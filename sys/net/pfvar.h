@@ -1,4 +1,4 @@
-/*	$OpenBSD: pfvar.h,v 1.538 2024/05/13 01:15:53 jsg Exp $ */
+/*	$OpenBSD: pfvar.h,v 1.540 2024/10/12 23:31:14 jsg Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -36,7 +36,6 @@
 
 #include <sys/queue.h>
 #include <sys/tree.h>
-#include <sys/rwlock.h>
 #include <sys/syslimits.h>
 #include <sys/refcnt.h>
 #include <sys/timeout.h>
@@ -1033,10 +1032,6 @@ struct pfr_ktable {
 #define pfrkt_match	pfrkt_ts.pfrts_match
 #define pfrkt_nomatch	pfrkt_ts.pfrts_nomatch
 #define pfrkt_tzero	pfrkt_ts.pfrts_tzero
-
-RB_HEAD(pf_state_tree_ext_gwy, pf_state_key);
-RB_PROTOTYPE(pf_state_tree_ext_gwy, pf_state_key,
-    entry_ext_gwy, pf_state_compare_ext_gwy)
 
 RB_HEAD(pfi_ifhead, pfi_kif);
 

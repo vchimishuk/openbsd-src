@@ -1,7 +1,7 @@
-.\"	$OpenBSD: mg.1,v 1.136 2023/10/16 08:33:16 op Exp $
+.\"	$OpenBSD: mg.1,v 1.139 2024/07/10 05:19:02 jmc Exp $
 .\" This file is in the public domain.
 .\"
-.Dd $Mdocdate: October 16 2023 $
+.Dd $Mdocdate: July 10 2024 $
 .Dt MG 1
 .Os
 .Sh NAME
@@ -938,8 +938,12 @@ Set the tab width for the current buffer, or the default for new buffers
 if called with a prefix argument or from the startup file.
 .It Ic shell-command
 Execute external command from mini-buffer.
+With a universal argument it inserts the command output into the current
+buffer.
 .It Ic shell-command-on-region
 Provide the text in region to the shell command as input.
+With a universal argument it replaces the region with the command
+output.
 .It Ic shrink-window
 Shrink current window by one line.
 The window immediately below is expanded to pick up the slack.
@@ -1055,6 +1059,8 @@ dired-next-line
 dired-shell-command
 .It +
 dired-create-directory
+.It ^
+dired-up-directory
 .It a
 dired-find-alternate-file
 .It c
@@ -1130,6 +1136,8 @@ Remove the deletion flag for the file on the current line.
 .It Ic dired-unmark-backward
 Remove the deletion flag from the file listed on the previous line
 of the dired buffer, then move up to that line.
+.It Ic dired-up-directory
+Open a dired buffer in the parent directory.
 .It Ic quit-window
 Close the current dired buffer.
 .El

@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_tlsext.c,v 1.149 2024/04/16 17:46:30 tb Exp $ */
+/* $OpenBSD: ssl_tlsext.c,v 1.154 2024/07/09 12:27:27 beck Exp $ */
 /*
  * Copyright (c) 2016, 2017, 2019 Joel Sing <jsing@openbsd.org>
  * Copyright (c) 2017 Doug Hogan <doug@openbsd.org>
@@ -1472,7 +1472,8 @@ tlsext_keyshare_server_process(SSL *s, uint16_t msg_type, CBS *cbs, int *alert)
 	size_t i, j, client_groups_index;
 	int preferred_group_found = 0;
 	int decode_error;
-	uint16_t group, client_preferred_group;
+	uint16_t client_preferred_group = 0;
+	uint16_t group;
 	CBS client_shares, key_exchange;
 
 	/*
@@ -1572,6 +1573,10 @@ tlsext_keyshare_server_process(SSL *s, uint16_t msg_type, CBS *cbs, int *alert)
 		if (!CBS_get_u16_length_prefixed(&client_shares, &key_exchange))
 			return 0;
 
+		/* Ignore this client share if we're using earlier than TLSv1.3 */
+		if (s->s3->hs.our_max_tls_version < TLS1_3_VERSION)
+			continue;
+
 		/*
 		 * Ensure the client share group was sent in supported groups,
 		 * and was sent in the same order as supported groups. The
@@ -1589,12 +1594,7 @@ tlsext_keyshare_server_process(SSL *s, uint16_t msg_type, CBS *cbs, int *alert)
 			return 0;
 		}
 
-		/*
-		 * Ignore this client share if we're using earlier than TLSv1.3
-		 * or we've already selected a key share.
-		 */
-		if (s->s3->hs.our_max_tls_version < TLS1_3_VERSION)
-			continue;
+		/* Ignore this client share if we have already selected a key share */
 		if (s->s3->hs.key_share != NULL)
 			continue;
 
@@ -2367,7 +2367,8 @@ tls_extension_find(uint16_t type, size_t *tls_extensions_idx)
 
 	for (i = 0; i < N_TLS_EXTENSIONS; i++) {
 		if (tls_extensions[i].type == type) {
-			*tls_extensions_idx = i;
+			if (tls_extensions_idx != NULL)
+				*tls_extensions_idx = i;
 			return &tls_extensions[i];
 		}
 	}
@@ -2408,7 +2409,7 @@ int
 tlsext_randomize_build_order(SSL *s)
 {
 	const struct tls_extension *psk_ext;
-	size_t idx, new_idx, psk_idx;
+	size_t idx, new_idx;
 	size_t alpn_idx = 0, sni_idx = 0;
 
 	free(s->tlsext_build_order);
@@ -2421,12 +2422,12 @@ tlsext_randomize_build_order(SSL *s)
 
 	/* RFC 8446, section 4.2 - PSK MUST be the last extension in the CH. */
 	if ((psk_ext = tls_extension_find(TLSEXT_TYPE_pre_shared_key,
-	    &psk_idx)) == NULL)
+	    NULL)) == NULL)
 		return 0;
 	s->tlsext_build_order[N_TLS_EXTENSIONS - 1] = psk_ext;
 
 	/* Fisher-Yates shuffle with PSK fixed. */
-	for (idx = 0; idx < psk_idx; idx++) {
+	for (idx = 0; idx < N_TLS_EXTENSIONS - 1; idx++) {
 		new_idx = arc4random_uniform(idx + 1);
 		s->tlsext_build_order[idx] = s->tlsext_build_order[new_idx];
 		s->tlsext_build_order[new_idx] = &tls_extensions[idx];

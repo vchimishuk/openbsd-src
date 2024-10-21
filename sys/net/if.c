@@ -1,4 +1,4 @@
-/*	$OpenBSD: if.c,v 1.718 2024/02/06 00:18:53 bluhm Exp $	*/
+/*	$OpenBSD: if.c,v 1.721 2024/10/17 05:02:12 jsg Exp $	*/
 /*	$NetBSD: if.c,v 1.35 1996/05/07 05:26:04 thorpej Exp $	*/
 
 /*
@@ -66,10 +66,8 @@
 #include "carp.h"
 #include "ether.h"
 #include "pf.h"
-#include "pfsync.h"
 #include "ppp.h"
 #include "pppoe.h"
-#include "if_wg.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -3353,6 +3351,7 @@ ifnewlladdr(struct ifnet *ifp)
 {
 #ifdef INET6
 	struct ifaddr *ifa;
+	int i_am_router = (atomic_load_int(&ip6_forwarding) != 0);
 #endif
 	struct ifreq ifrq;
 	short up;
@@ -3378,7 +3377,7 @@ ifnewlladdr(struct ifnet *ifp)
 	 * Update the link-local address.  Don't do it if we're
 	 * a router to avoid confusing hosts on the network.
 	 */
-	if (!ip6_forwarding) {
+	if (!i_am_router) {
 		ifa = &in6ifa_ifpforlinklocal(ifp, 0)->ia_ifa;
 		if (ifa) {
 			in6_purgeaddr(ifa);

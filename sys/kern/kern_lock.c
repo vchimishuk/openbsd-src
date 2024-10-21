@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_lock.c,v 1.73 2024/03/26 18:18:30 bluhm Exp $	*/
+/*	$OpenBSD: kern_lock.c,v 1.75 2024/07/03 01:36:50 jsg Exp $	*/
 
 /*
  * Copyright (c) 2017 Visa Hankala
@@ -97,9 +97,6 @@ ___mp_lock_init(struct __mp_lock *mpl, const struct lock_type *type)
 	if (mpl == &kernel_lock)
 		mpl->mpl_lock_obj.lo_flags = LO_WITNESS | LO_INITIALIZED |
 		    LO_SLEEPABLE | (LO_CLASS_KERNEL_LOCK << LO_CLASSSHIFT);
-	else if (mpl == &sched_lock)
-		mpl->mpl_lock_obj.lo_flags = LO_WITNESS | LO_INITIALIZED |
-		    LO_RECURSABLE | (LO_CLASS_SCHED_LOCK << LO_CLASSSHIFT);
 	WITNESS_INIT(&mpl->mpl_lock_obj, type);
 #endif
 }
@@ -193,30 +190,6 @@ __mp_release_all(struct __mp_lock *mpl)
 	membar_exit();
 	mpl->mpl_ticket++;
 	intr_restore(s);
-
-	return (rv);
-}
-
-int
-__mp_release_all_but_one(struct __mp_lock *mpl)
-{
-	struct __mp_lock_cpu *cpu = &mpl->mpl_cpus[cpu_number()];
-	int rv = cpu->mplc_depth - 1;
-#ifdef WITNESS
-	int i;
-
-	for (i = 0; i < rv; i++)
-		WITNESS_UNLOCK(&mpl->mpl_lock_obj, LOP_EXCLUSIVE);
-#endif
-
-#ifdef MP_LOCKDEBUG
-	if (!__mp_lock_held(mpl, curcpu())) {
-		db_printf("__mp_release_all_but_one(%p): not held lock\n", mpl);
-		db_enter();
-	}
-#endif
-
-	cpu->mplc_depth = 1;
 
 	return (rv);
 }

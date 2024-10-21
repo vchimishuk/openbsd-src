@@ -1,4 +1,4 @@
-/* $OpenBSD: packet.c,v 1.314 2024/05/17 00:30:24 djm Exp $ */
+/* $OpenBSD: packet.c,v 1.317 2024/08/23 04:51:00 deraadt Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -519,7 +519,7 @@ ssh_remote_ipaddr(struct ssh *ssh)
  * be freed. NB. this will usually trigger a DNS query. Return value is on
  * heap and no caching is performed.
  * This function does additional checks on the hostname to mitigate some
- * attacks on based on conflation of hostnames and addresses and will
+ * attacks based on conflation of hostnames and addresses and will
  * fall back to returning an address on error.
  */
 
@@ -991,9 +991,8 @@ ssh_set_newkeys(struct ssh *ssh, int mode)
 	/* explicit_bzero(enc->iv,  enc->block_size);
 	   explicit_bzero(enc->key, enc->key_len);
 	   explicit_bzero(mac->key, mac->key_len); */
-	if ((comp->type == COMP_ZLIB ||
-	    (comp->type == COMP_DELAYED &&
-	    state->after_authentication)) && comp->enabled == 0) {
+	if (((comp->type == COMP_DELAYED && state->after_authentication)) &&
+	    comp->enabled == 0) {
 		if ((r = ssh_packet_init_compression(ssh)) < 0)
 			return r;
 		if (mode == MODE_OUT) {
@@ -2617,6 +2616,11 @@ sshpkt_put_ec(struct ssh *ssh, const EC_POINT *v, const EC_GROUP *g)
 	return sshbuf_put_ec(ssh->state->outgoing_packet, v, g);
 }
 
+int
+sshpkt_put_ec_pkey(struct ssh *ssh, EVP_PKEY *pkey)
+{
+	return sshbuf_put_ec_pkey(ssh->state->outgoing_packet, pkey);
+}
 
 int
 sshpkt_put_bignum2(struct ssh *ssh, const BIGNUM *v)

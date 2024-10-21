@@ -1,4 +1,4 @@
-/*	$OpenBSD: xhci_acpi.c,v 1.11 2022/10/30 15:34:54 patrick Exp $	*/
+/*	$OpenBSD: xhci_acpi.c,v 1.13 2024/10/09 00:38:26 jsg Exp $	*/
 /*
  * Copyright (c) 2018 Mark Kettenis
  *
@@ -47,7 +47,8 @@ int	xhci_acpi_match(struct device *, void *, void *);
 void	xhci_acpi_attach(struct device *, struct device *, void *);
 
 const struct cfattach xhci_acpi_ca = {
-	sizeof(struct xhci_acpi_softc), xhci_acpi_match, xhci_acpi_attach
+	sizeof(struct xhci_acpi_softc), xhci_acpi_match, xhci_acpi_attach,
+	NULL, xhci_activate
 };
 
 const char *xhci_hids[] = {
@@ -62,6 +63,9 @@ const char *xhci_hids[] = {
 	"QCOM0826",		/* SC7180 USB */
 	"QCOM24B6",		/* SDM850 URS */
 	"QCOM24B7",
+	"QCOM0C8B",		/* X1E80100 URS */
+	"QCOM0C8C",
+	"QCOM0D07",
 	NULL
 };
 
@@ -108,7 +112,10 @@ xhci_acpi_attach(struct device *parent, struct device *self, void *aux)
 	    strcmp(aaa->aaa_dev, "QCOM068B") == 0 ||
 	    strcmp(aaa->aaa_dev, "QCOM068C") == 0 ||
 	    strcmp(aaa->aaa_dev, "QCOM24B6") == 0 ||
-	    strcmp(aaa->aaa_dev, "QCOM24B7") == 0) {
+	    strcmp(aaa->aaa_dev, "QCOM24B7") == 0 ||
+	    strcmp(aaa->aaa_dev, "QCOM0C8B") == 0 ||
+	    strcmp(aaa->aaa_dev, "QCOM0C8C") == 0 ||
+	    strcmp(aaa->aaa_dev, "QCOM0D07") == 0) {
 		SIMPLEQ_FOREACH(node, &sc->sc_node->son, sib) {
 			if (strncmp(node->name, "USB", 3) == 0) {
 				aaa->aaa_node = node;

@@ -1,4 +1,4 @@
-/*	$OpenBSD: acpi_machdep.c,v 1.109 2024/05/26 13:37:31 kettenis Exp $	*/
+/*	$OpenBSD: acpi_machdep.c,v 1.112 2024/10/14 11:49:34 jan Exp $	*/
 /*
  * Copyright (c) 2005 Thorsten Lockert <tholo@sigmasoft.com>
  *
@@ -366,10 +366,10 @@ acpi_attach_machdep(struct acpi_softc *sc)
 	/* Unmap, will be remapped in acpi_sleep_cpu */
 	pmap_kremove(ACPI_TRAMPOLINE, PAGE_SIZE);
 	pmap_kremove(ACPI_TRAMP_DATA, PAGE_SIZE);
-#endif /* SMALL_KERNEL */
+#endif /* ! SMALL_KERNEL */
 }
 
-#ifndef SMALL_KERNEL
+#if defined(SUSPEND) && !defined(SMALL_KERNEL)
 /*
  * This function may not have local variables due to a bug between
  * acpi_savecpu() and the resume path.
@@ -377,6 +377,9 @@ acpi_attach_machdep(struct acpi_softc *sc)
 int
 acpi_sleep_cpu(struct acpi_softc *sc, int state)
 {
+	if (state == ACPI_STATE_S0)
+		return cpu_suspend_primary();
+
 	rtcstop();
 #if NLAPIC > 0
 	lapic_disable();
@@ -452,12 +455,15 @@ acpi_sleep_cpu(struct acpi_softc *sc, int state)
 /*
  * First repair the interrupt hardware so that any events which occur
  * will cause the least number of unexpected side effects.  We re-start
- * the clocks early because we will soon run AML whigh might do DELAY.
+ * the clocks early because we will soon run AML which might do DELAY.
  * Then PM, and then further system/CPU work for the BSP cpu.
  */ 
 void
 acpi_resume_cpu(struct acpi_softc *sc, int state)
 {
+	if (state == ACPI_STATE_S0)
+		return;
+
 	cpu_init_msrs(&cpu_info_primary);
 	cpu_fix_msrs(&cpu_info_primary);
 
@@ -556,7 +562,7 @@ resume_mp(void)
 }
 #endif /* MULTIPROCESSOR */
 
-#endif /* ! SMALL_KERNEL */
+#endif /* defined(SUSPEND) && !defined(SMALL_KERNEL) */
 
 bus_dma_tag_t
 acpi_iommu_device_map(struct aml_node *node, bus_dma_tag_t dmat)

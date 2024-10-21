@@ -1,4 +1,4 @@
-/*	$OpenBSD: vfs_subr.c,v 1.319 2024/02/03 18:51:58 beck Exp $	*/
+/*	$OpenBSD: vfs_subr.c,v 1.324 2024/10/18 05:52:32 miod Exp $	*/
 /*	$NetBSD: vfs_subr.c,v 1.53 1996/04/22 01:39:13 christos Exp $	*/
 
 /*
@@ -246,10 +246,7 @@ vfs_unbusy(struct mount *mp)
 int
 vfs_isbusy(struct mount *mp)
 {
-	if (RWLOCK_OWNER(&mp->mnt_lock) > 0)
-		return (1);
-	else
-		return (0);
+	return (rw_status(&mp->mnt_lock) != 0);
 }
 
 /*
@@ -982,7 +979,7 @@ vflush_vnode(struct vnode *vp, void *arg)
 	if (empty)
 		return (0);
 
-#ifdef DEBUG_SYSCTL
+#if defined(DEBUG_SYSCTL) && (defined(DEBUG) || defined(DIAGNOSTIC))
 	if (busyprt)
 		vprint("vflush: busy vnode", vp);
 #endif
@@ -2223,18 +2220,6 @@ reassignbuf(struct buf *bp)
 		}
 	}
 	bufinsvn(bp, listheadp);
-}
-
-/*
- * Check if vnode represents a disk device
- */
-int
-vn_isdisk(struct vnode *vp, int *errp)
-{
-	if (vp->v_type != VBLK && vp->v_type != VCHR)
-		return (0);
-
-	return (1);
 }
 
 #ifdef DDB

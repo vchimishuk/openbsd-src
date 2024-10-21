@@ -1,4 +1,4 @@
-/* $OpenBSD: evp.h,v 1.134 2024/04/14 14:14:14 tb Exp $ */
+/* $OpenBSD: evp.h,v 1.137 2024/08/31 10:38:49 tb Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -113,6 +113,7 @@
 #define EVP_PKEY_HMAC		NID_hmac
 #define EVP_PKEY_CMAC		NID_cmac
 #define EVP_PKEY_HKDF		NID_hkdf
+#define EVP_PKEY_TLS1_PRF	NID_tls1_prf
 #define EVP_PKEY_GOSTR12_256	NID_id_tc26_gost3410_2012_256
 #define EVP_PKEY_GOSTR12_512	NID_id_tc26_gost3410_2012_512
 #define EVP_PKEY_ED25519	NID_ED25519
@@ -594,9 +595,6 @@ const EVP_MD *EVP_sm3(void);
 #ifndef OPENSSL_NO_RIPEMD
 const EVP_MD *EVP_ripemd160(void);
 #endif
-#ifndef OPENSSL_NO_WHIRLPOOL
-const EVP_MD *EVP_whirlpool(void);
-#endif
 const EVP_CIPHER *EVP_enc_null(void);		/* does nothing :-) */
 #ifndef OPENSSL_NO_DES
 const EVP_CIPHER *EVP_des_ecb(void);
@@ -984,9 +982,6 @@ int EVP_PKEY_paramgen_init(EVP_PKEY_CTX *ctx);
 int EVP_PKEY_paramgen(EVP_PKEY_CTX *ctx, EVP_PKEY **ppkey);
 int EVP_PKEY_keygen_init(EVP_PKEY_CTX *ctx);
 int EVP_PKEY_keygen(EVP_PKEY_CTX *ctx, EVP_PKEY **ppkey);
-int EVP_PKEY_check(EVP_PKEY_CTX *ctx);
-int EVP_PKEY_public_check(EVP_PKEY_CTX *ctx);
-int EVP_PKEY_param_check(EVP_PKEY_CTX *ctx);
 
 void EVP_PKEY_CTX_set_cb(EVP_PKEY_CTX *ctx, EVP_PKEY_gen_cb *cb);
 EVP_PKEY_gen_cb *EVP_PKEY_CTX_get_cb(EVP_PKEY_CTX *ctx);

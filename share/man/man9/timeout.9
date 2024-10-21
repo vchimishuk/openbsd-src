@@ -1,4 +1,4 @@
-.\"	$OpenBSD: timeout.9,v 1.57 2023/10/12 15:32:38 cheloha Exp $
+.\"	$OpenBSD: timeout.9,v 1.59 2024/08/11 00:50:38 dlg Exp $
 .\"
 .\" Copyright (c) 2000 Artur Grabowski <art@openbsd.org>
 .\" Copyright (c) 2021, 2022 Scott Cheloha <cheloha@openbsd.org>
@@ -24,7 +24,7 @@
 .\" OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 .\" ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd $Mdocdate: October 12 2023 $
+.Dd $Mdocdate: August 11 2024 $
 .Dt TIMEOUT_SET 9
 .Os
 .Sh NAME
@@ -83,17 +83,17 @@
 .Ft int
 .Fo timeout_add_msec
 .Fa "struct timeout *to"
-.Fa "int msecs"
+.Fa "uint64_t msecs"
 .Fc
 .Ft int
 .Fo timeout_add_usec
 .Fa "struct timeout *to"
-.Fa "int usecs"
+.Fa "uint64_t usecs"
 .Fc
 .Ft int
 .Fo timeout_add_nsec
 .Fa "struct timeout *to"
-.Fa "int nsecs"
+.Fa "uint64_t nsecs"
 .Fc
 .Ft int
 .Fo timeout_add_tv

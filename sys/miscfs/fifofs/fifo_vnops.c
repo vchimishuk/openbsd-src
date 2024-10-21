@@ -1,4 +1,4 @@
-/*	$OpenBSD: fifo_vnops.c,v 1.105 2024/05/03 17:43:09 mvs Exp $	*/
+/*	$OpenBSD: fifo_vnops.c,v 1.108 2024/10/18 05:52:32 miod Exp $	*/
 /*	$NetBSD: fifo_vnops.c,v 1.18 1996/03/16 23:52:42 christos Exp $	*/
 
 /*
@@ -174,10 +174,16 @@ fifo_open(void *v)
 			return (error);
 		}
 		fip->fi_readers = fip->fi_writers = 0;
+		/*
+		 * Should take both solock() and `sb_mtx' mutex for
+		 * SS_CANTSENDMORE flag modifications.
+		 */
+		solock(wso);
 		mtx_enter(&wso->so_snd.sb_mtx);
 		wso->so_snd.sb_state |= SS_CANTSENDMORE;
 		wso->so_snd.sb_lowat = PIPE_BUF;
 		mtx_leave(&wso->so_snd.sb_mtx);
+		sounlock(wso);
 	} else {
 		rso = fip->fi_readsock;
 		wso = fip->fi_writesock;
@@ -185,9 +191,11 @@ fifo_open(void *v)
 	if (ap->a_mode & FREAD) {
 		fip->fi_readers++;
 		if (fip->fi_readers == 1) {
+			solock(wso);
 			mtx_enter(&wso->so_snd.sb_mtx);
 			wso->so_snd.sb_state &= ~SS_CANTSENDMORE;
 			mtx_leave(&wso->so_snd.sb_mtx);
+			sounlock(wso);
 			if (fip->fi_writers > 0)
 				wakeup(&fip->fi_writers);
 		}
@@ -389,14 +397,17 @@ fifo_reclaim(void *v)
 int
 fifo_print(void *v)
 {
+#if defined(DEBUG) || defined(DIAGNOSTIC) || defined(VFSLCKDEBUG)
 	struct vop_print_args *ap = v;
 
 	printf("tag VT_NON");
 	fifo_printinfo(ap->a_vp);
 	printf("\n");
+#endif
 	return 0;
 }
 
+#if defined(DEBUG) || defined(DIAGNOSTIC) || defined(VFSLCKDEBUG)
 /*
  * Print out internal contents of a fifo vnode.
  */
@@ -408,6 +419,7 @@ fifo_printinfo(struct vnode *vp)
 	printf(", fifo with %ld readers and %ld writers",
 		fip->fi_readers, fip->fi_writers);
 }
+#endif
 
 /*
  * Return POSIX pathconf information applicable to fifo's.
@@ -556,7 +568,7 @@ filt_fifowrite(struct knote *kn, long hint)
 
 	MUTEX_ASSERT_LOCKED(&so->so_snd.sb_mtx);
 
-	kn->kn_data = sbspace(so, &so->so_snd);
+	kn->kn_data = sbspace_locked(so, &so->so_snd);
 	if (so->so_snd.sb_state & SS_CANTSENDMORE) {
 		kn->kn_flags |= EV_EOF;
 		rv = 1;

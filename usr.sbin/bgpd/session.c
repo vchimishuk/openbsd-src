@@ -1,4 +1,4 @@
-/*	$OpenBSD: session.c,v 1.478 2024/05/22 08:41:14 claudio Exp $ */
+/*	$OpenBSD: session.c,v 1.484 2024/10/01 18:29:34 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004, 2005 Henning Brauer <henning@openbsd.org>
@@ -305,7 +305,7 @@ session_main(int debug, int verbose)
 				free(m);
 				continue;
 			}
-			if (m->wbuf.queued)
+			if (msgbuf_queuelen(&m->wbuf) > 0)
 				mrt_cnt++;
 		}
 
@@ -415,7 +415,8 @@ session_main(int debug, int verbose)
 
 			/* are we waiting for a write? */
 			events = POLLIN;
-			if (p->wbuf.queued > 0 || p->state == STATE_CONNECT)
+			if (msgbuf_queuelen(&p->wbuf) > 0 ||
+			    p->state == STATE_CONNECT)
 				events |= POLLOUT;
 			/* is there still work to do? */
 			if (p->rpending && p->rbuf && p->rbuf->wpos)
@@ -433,7 +434,7 @@ session_main(int debug, int verbose)
 		idx_peers = i;
 
 		LIST_FOREACH(m, &mrthead, entry)
-			if (m->wbuf.queued) {
+			if (msgbuf_queuelen(&m->wbuf) > 0) {
 				pfd[i].fd = m->wbuf.fd;
 				pfd[i].events = POLLOUT;
 				mrt_l[i - idx_peers] = m;
@@ -884,7 +885,8 @@ change_state(struct peer *peer, enum session_state state,
 		 * try to write out what's buffered (maybe a notification),
 		 * don't bother if it fails
 		 */
-		if (peer->state >= STATE_OPENSENT && peer->wbuf.queued)
+		if (peer->state >= STATE_OPENSENT &&
+		    msgbuf_queuelen(&peer->wbuf) > 0)
 			msgbuf_write(&peer->wbuf);
 
 		/*
@@ -1030,14 +1032,15 @@ session_accept(int listenfd)
 		}
 
 open:
-		if (p->conf.auth.method != AUTH_NONE && sysdep.no_pfkey) {
+		if (p->auth_conf.method != AUTH_NONE && sysdep.no_pfkey) {
 			log_peer_warnx(&p->conf,
 			    "ipsec or md5sig configured but not available");
 			close(connfd);
 			return;
 		}
 
-		if (tcp_md5_check(connfd, p) == -1) {
+		if (tcp_md5_check(connfd, &p->auth_conf) == -1) {
+			log_peer_warn(&p->conf, "check md5sig");
 			close(connfd);
 			return;
 		}
@@ -1064,7 +1067,7 @@ int
 session_connect(struct peer *peer)
 {
 	struct sockaddr		*sa;
-	struct bgpd_addr	*bind_addr = NULL;
+	struct bgpd_addr	*bind_addr;
 	socklen_t		 sa_len;
 
 	/*
@@ -1082,25 +1085,20 @@ session_connect(struct peer *peer)
 		return (-1);
 	}
 
-	if (peer->conf.auth.method != AUTH_NONE && sysdep.no_pfkey) {
+	if (peer->auth_conf.method != AUTH_NONE && sysdep.no_pfkey) {
 		log_peer_warnx(&peer->conf,
 		    "ipsec or md5sig configured but not available");
 		bgp_fsm(peer, EVNT_CON_OPENFAIL);
 		return (-1);
 	}
 
-	tcp_md5_set(peer->fd, peer);
+	if (tcp_md5_set(peer->fd, &peer->auth_conf,
+	    &peer->conf.remote_addr) == -1)
+		log_peer_warn(&peer->conf, "setting md5sig");
 	peer->wbuf.fd = peer->fd;
 
 	/* if local-address is set we need to bind() */
-	switch (peer->conf.remote_addr.aid) {
-	case AID_INET:
-		bind_addr = &peer->conf.local_addr_v4;
-		break;
-	case AID_INET6:
-		bind_addr = &peer->conf.local_addr_v6;
-		break;
-	}
+	bind_addr = session_localaddr(peer);
 	if ((sa = addr2sa(bind_addr, 0, &sa_len)) != NULL) {
 		if (bind(peer->fd, sa, sa_len) == -1) {
 			log_peer_warn(&peer->conf, "session_connect bind");
@@ -1254,7 +1252,11 @@ get_alternate_addr(struct bgpd_addr *local, struct bgpd_addr *remote,
 		    match->ifa_addr->sa_family != AF_INET6)
 			continue;
 		if (sa_equal(local, match->ifa_addr)) {
-			if (match->ifa_flags & IFF_POINTOPOINT &&
+			if (remote->aid == AID_INET6 &&
+			    IN6_IS_ADDR_LINKLOCAL(&remote->v6)) {
+				/* IPv6 LLA are by definition connected */
+				connected = 1;
+			} else if (match->ifa_flags & IFF_POINTOPOINT &&
 			    match->ifa_dstaddr != NULL) {
 				if (sa_equal(remote, match->ifa_dstaddr))
 					connected = 1;
@@ -1425,7 +1427,7 @@ session_sendmsg(struct bgp_msg *msg, struct peer *p)
 	}
 
 	ibuf_close(&p->wbuf, msg->buf);
-	if (!p->throttled && p->wbuf.queued > SESS_MSG_HIGH_MARK) {
+	if (!p->throttled && msgbuf_queuelen(&p->wbuf) > SESS_MSG_HIGH_MARK) {
 		if (imsg_rde(IMSG_XOFF, p->conf.id, NULL, 0) == -1)
 			log_peer_warn(&p->conf, "imsg_compose XOFF");
 		else
@@ -1932,7 +1934,7 @@ session_dispatch_msg(struct pollfd *pfd, struct peer *p)
 		return (1);
 	}
 
-	if (pfd->revents & POLLOUT && p->wbuf.queued) {
+	if (pfd->revents & POLLOUT && msgbuf_queuelen(&p->wbuf) > 0) {
 		if ((error = msgbuf_write(&p->wbuf)) <= 0 && errno != EAGAIN) {
 			if (error == 0)
 				log_peer_warnx(&p->conf, "Connection closed");
@@ -1943,7 +1945,8 @@ session_dispatch_msg(struct pollfd *pfd, struct peer *p)
 		}
 		p->stats.last_write = getmonotime();
 		start_timer_sendholdtime(p);
-		if (p->throttled && p->wbuf.queued < SESS_MSG_LOW_MARK) {
+		if (p->throttled &&
+		    msgbuf_queuelen(&p->wbuf) < SESS_MSG_LOW_MARK) {
 			if (imsg_rde(IMSG_XON, p->conf.id, NULL, 0) == -1)
 				log_peer_warn(&p->conf, "imsg_compose XON");
 			else
@@ -2559,6 +2562,7 @@ parse_capabilities(struct peer *peer, struct ibuf *buf, uint32_t *as)
 				    "Received multi protocol capability: "
 				    " unknown AFI %u, safi %u pair",
 				    afi, safi);
+				peer->capa.peer.mp[AID_UNSPEC] = 1;
 				break;
 			}
 			peer->capa.peer.mp[aid] = 1;
@@ -2715,12 +2719,14 @@ capa_neg_calc(struct peer *p)
 	    (p->capa.ann.as4byte && p->capa.peer.as4byte) != 0;
 
 	/* MP: both side must agree on the AFI,SAFI pair */
+	if (p->capa.peer.mp[AID_UNSPEC])
+		hasmp = 1;
 	for (i = AID_MIN; i < AID_MAX; i++) {
 		if (p->capa.ann.mp[i] && p->capa.peer.mp[i])
 			p->capa.neg.mp[i] = 1;
 		else
 			p->capa.neg.mp[i] = 0;
-		if (p->capa.ann.mp[i])
+		if (p->capa.ann.mp[i] || p->capa.peer.mp[i])
 			hasmp = 1;
 	}
 	/* if no MP capability present default to IPv4 unicast mode */
@@ -2993,6 +2999,16 @@ session_dispatch_imsg(struct imsgbuf *imsgbuf, int idx, u_int *listener_cnt)
 			if (RB_INSERT(peer_head, &nconf->peers, p) != NULL)
 				fatalx("%s: peer tree is corrupt", __func__);
 			break;
+		case IMSG_RECONF_PEER_AUTH:
+			if (idx != PFD_PIPE_MAIN)
+				fatalx("reconf request not from parent");
+			if ((p = getpeerbyid(nconf, peerid)) == NULL) {
+				log_warnx("no such peer: id=%u", peerid);
+				break;
+			}
+			if (pfkey_recv_conf(p, &imsg) == -1)
+				fatal("pfkey_recv_conf");
+			break;
 		case IMSG_RECONF_LISTENER:
 			if (idx != PFD_PIPE_MAIN)
 				fatalx("reconf request not from parent");
@@ -3149,13 +3165,13 @@ session_dispatch_imsg(struct imsgbuf *imsgbuf, int idx, u_int *listener_cnt)
 				if (mrt == NULL)
 					fatal("session_dispatch_imsg");
 				memcpy(mrt, &xmrt, sizeof(struct mrt));
-				TAILQ_INIT(&mrt->wbuf.bufs);
+				msgbuf_init(&mrt->wbuf);
 				LIST_INSERT_HEAD(&mrthead, mrt, entry);
 			} else {
 				/* old dump reopened */
 				close(mrt->wbuf.fd);
-				mrt->wbuf.fd = xmrt.wbuf.fd;
 			}
+			mrt->wbuf.fd = xmrt.wbuf.fd;
 			break;
 		case IMSG_MRT_CLOSE:
 			if (idx != PFD_PIPE_MAIN)
@@ -3631,6 +3647,18 @@ session_stop(struct peer *peer, uint8_t subcode, const char *reason)
 	bgp_fsm(peer, EVNT_STOP);
 }
 
+struct bgpd_addr *
+session_localaddr(struct peer *p)
+{
+	switch (p->conf.remote_addr.aid) {
+	case AID_INET:
+		return &p->conf.local_addr_v4;
+	case AID_INET6:
+		return &p->conf.local_addr_v6;
+	}
+	fatalx("Unknown AID in %s", __func__);
+}
+
 void
 merge_peers(struct bgpd_config *c, struct bgpd_config *nc)
 {
@@ -3647,13 +3675,14 @@ merge_peers(struct bgpd_config *c, struct bgpd_config *nc)
 		}
 
 		/* peer no longer uses TCP MD5SIG so deconfigure */
-		if (p->conf.auth.method == AUTH_MD5SIG &&
-		    np->conf.auth.method != AUTH_MD5SIG)
+		if (p->auth_conf.method == AUTH_MD5SIG &&
+		    np->auth_conf.method != AUTH_MD5SIG)
 			tcp_md5_del_listener(c, p);
-		else if (np->conf.auth.method == AUTH_MD5SIG)
+		else if (np->auth_conf.method == AUTH_MD5SIG)
 			tcp_md5_add_listener(c, np);
 
 		memcpy(&p->conf, &np->conf, sizeof(p->conf));
+		memcpy(&p->auth_conf, &np->auth_conf, sizeof(p->auth_conf));
 		RB_REMOVE(peer_head, &nc->peers, np);
 		free(np);
 
@@ -3696,7 +3725,7 @@ merge_peers(struct bgpd_config *c, struct bgpd_config *nc)
 		RB_REMOVE(peer_head, &nc->peers, np);
 		if (RB_INSERT(peer_head, &c->peers, np) != NULL)
 			fatalx("%s: peer tree is corrupt", __func__);
-		if (np->conf.auth.method == AUTH_MD5SIG)
+		if (np->auth_conf.method == AUTH_MD5SIG)
 			tcp_md5_add_listener(c, np);
 	}
 }

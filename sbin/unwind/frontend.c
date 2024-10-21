@@ -1,4 +1,4 @@
-/*	$OpenBSD: frontend.c,v 1.81 2024/05/21 05:00:48 jsg Exp $	*/
+/*	$OpenBSD: frontend.c,v 1.83 2024/09/05 08:22:46 florian Exp $	*/
 
 /*
  * Copyright (c) 2018 Florian Obser <florian@openbsd.org>
@@ -260,6 +260,7 @@ frontend(int debug, int verbose)
 	TAILQ_INIT(&new_trust_anchors);
 
 	add_new_ta(&trust_anchors, KSK2017);
+	add_new_ta(&trust_anchors, KSK2024);
 
 	event_dispatch();
 
@@ -772,7 +773,7 @@ handle_query(struct pending_query *pq)
 	}
 
 	rcode = parse_edns_from_query_pkt(pq->qbuf, &pq->edns, NULL, NULL,
-	    NULL, 0, pq->region);
+	    NULL, 0, pq->region, NULL);
 	if (rcode != LDNS_RCODE_NOERROR) {
 		error_answer(pq, rcode);
 		goto send_answer;
@@ -1058,7 +1059,7 @@ resend_dns64_query(struct pending_query *opq)
 	}
 
 	rcode = parse_edns_from_query_pkt(pq->qbuf, &pq->edns, NULL, NULL,
-	    NULL, 0, pq->region);
+	    NULL, 0, pq->region, NULL);
 	if (rcode != LDNS_RCODE_NOERROR) {
 		error_answer(pq, rcode);
 		goto send_answer;

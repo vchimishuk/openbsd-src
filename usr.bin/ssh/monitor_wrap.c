@@ -1,4 +1,4 @@
-/* $OpenBSD: monitor_wrap.c,v 1.130 2024/05/17 00:30:24 djm Exp $ */
+/* $OpenBSD: monitor_wrap.c,v 1.137 2024/10/14 01:57:50 djm Exp $ */
 /*
  * Copyright 2002 Niels Provos <provos@citi.umich.edu>
  * Copyright 2002 Markus Friedl <markus@openbsd.org>
@@ -28,6 +28,7 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <sys/queue.h>
+#include <sys/wait.h>
 
 #include <errno.h>
 #include <pwd.h>
@@ -69,6 +70,7 @@
 #include "session.h"
 #include "servconf.h"
 #include "monitor_wrap.h"
+#include "srclimit.h"
 
 #include "ssherr.h"
 
@@ -105,14 +107,35 @@ mm_log_handler(LogLevel level, int forced, const char *msg, void *ctx)
 	sshbuf_free(log_msg);
 }
 
-int
-mm_is_monitor(void)
+static void
+mm_reap(void)
 {
-	/*
-	 * m_pid is only set in the privileged part, and
-	 * points to the unprivileged child.
-	 */
-	return (pmonitor && pmonitor->m_pid > 0);
+	int status = -1;
+
+	if (!mm_is_monitor())
+		return;
+	while (waitpid(pmonitor->m_pid, &status, 0) == -1) {
+		if (errno == EINTR)
+			continue;
+		pmonitor->m_pid = -1;
+		fatal_f("waitpid: %s", strerror(errno));
+	}
+	if (WIFEXITED(status)) {
+		if (WEXITSTATUS(status) != 0) {
+			debug_f("preauth child exited with status %d",
+			    WEXITSTATUS(status));
+			cleanup_exit(255);
+		}
+	} else if (WIFSIGNALED(status)) {
+		error_f("preauth child terminated by signal %d",
+		    WTERMSIG(status));
+		cleanup_exit(signal_is_crash(WTERMSIG(status)) ?
+		    EXIT_CHILD_CRASH : 255);
+	} else {
+		error_f("preauth child terminated abnormally (status=0x%x)",
+		    status);
+		cleanup_exit(EXIT_CHILD_CRASH);
+	}
 }
 
 void
@@ -127,10 +150,15 @@ mm_request_send(int sock, enum monitor_reqtype type, struct sshbuf *m)
 		fatal_f("bad length %zu", mlen);
 	POKE_U32(buf, mlen + 1);
 	buf[4] = (u_char) type;		/* 1st byte of payload is mesg-type */
-	if (atomicio(vwrite, sock, buf, sizeof(buf)) != sizeof(buf))
+	if (atomicio(vwrite, sock, buf, sizeof(buf)) != sizeof(buf) ||
+	    atomicio(vwrite, sock, sshbuf_mutable_ptr(m), mlen) != mlen) {
+		if (errno == EPIPE) {
+			debug3_f("monitor fd closed");
+			mm_reap();
+			cleanup_exit(255);
+		}
 		fatal_f("write: %s", strerror(errno));
-	if (atomicio(vwrite, sock, sshbuf_mutable_ptr(m), mlen) != mlen)
-		fatal_f("write: %s", strerror(errno));
+	}
 }
 
 void
@@ -138,13 +166,14 @@ mm_request_receive(int sock, struct sshbuf *m)
 {
 	u_char buf[4], *p = NULL;
 	u_int msg_len;
-	int r;
+	int oerrno, r;
 
 	debug3_f("entering");
 
 	if (atomicio(read, sock, buf, sizeof(buf)) != sizeof(buf)) {
 		if (errno == EPIPE) {
 			debug3_f("monitor fd closed");
+			mm_reap();
 			cleanup_exit(255);
 		}
 		fatal_f("read: %s", strerror(errno));
@@ -155,8 +184,13 @@ mm_request_receive(int sock, struct sshbuf *m)
 	sshbuf_reset(m);
 	if ((r = sshbuf_reserve(m, msg_len, &p)) != 0)
 		fatal_fr(r, "reserve");
-	if (atomicio(read, sock, p, msg_len) != msg_len)
-		fatal_f("read: %s", strerror(errno));
+	if (atomicio(read, sock, p, msg_len) != msg_len) {
+		oerrno = errno;
+		error_f("read: %s", strerror(errno));
+		if (oerrno == EPIPE)
+			mm_reap();
+		cleanup_exit(255);
+	}
 }
 
 void
@@ -216,15 +250,13 @@ mm_sshkey_sign(struct ssh *ssh, struct sshkey *key, u_char **sigp, size_t *lenp,
     const u_char *data, size_t datalen, const char *hostkey_alg,
     const char *sk_provider, const char *sk_pin, u_int compat)
 {
-	struct kex *kex = *pmonitor->m_pkex;
 	struct sshbuf *m;
-	u_int ndx = kex->host_key_index(key, 0, ssh);
 	int r;
 
 	debug3_f("entering");
 	if ((m = sshbuf_new()) == NULL)
 		fatal_f("sshbuf_new failed");
-	if ((r = sshbuf_put_u32(m, ndx)) != 0 ||
+	if ((r = sshkey_puts(key, m)) != 0 ||
 	    (r = sshbuf_put_string(m, data, datalen)) != 0 ||
 	    (r = sshbuf_put_cstring(m, hostkey_alg)) != 0 ||
 	    (r = sshbuf_put_u32(m, compat)) != 0)
@@ -237,6 +269,7 @@ mm_sshkey_sign(struct ssh *ssh, struct sshkey *key, u_char **sigp, size_t *lenp,
 	if ((r = sshbuf_get_string(m, sigp, lenp)) != 0)
 		fatal_fr(r, "parse");
 	sshbuf_free(m);
+	debug3_f("%s signature len=%zu", hostkey_alg, *lenp);
 
 	return (0);
 }
@@ -640,6 +673,72 @@ mm_terminate(void)
 		fatal_f("sshbuf_new failed");
 	mm_request_send(pmonitor->m_recvfd, MONITOR_REQ_TERM, m);
 	sshbuf_free(m);
+}
+
+/* Request state information */
+
+void
+mm_get_state(struct ssh *ssh, struct include_list *includes,
+    struct sshbuf *conf, struct sshbuf **confdatap,
+    uint64_t *timing_secretp,
+    struct sshbuf **hostkeysp, struct sshbuf **keystatep,
+    u_char **pw_namep,
+    struct sshbuf **authinfop, struct sshbuf **auth_optsp)
+{
+	struct sshbuf *m, *inc;
+	u_char *cp;
+	size_t len;
+	int r;
+	struct include_item *item;
+
+	debug3_f("entering");
+
+	if ((m = sshbuf_new()) == NULL || (inc = sshbuf_new()) == NULL)
+		fatal_f("sshbuf_new failed");
+
+	mm_request_send(pmonitor->m_recvfd, MONITOR_REQ_STATE, m);
+
+	debug3_f("waiting for MONITOR_ANS_STATE");
+	mm_request_receive_expect(pmonitor->m_recvfd,
+	    MONITOR_ANS_STATE, m);
+
+	if ((r = sshbuf_get_string(m, &cp, &len)) != 0 ||
+	    (r = sshbuf_get_u64(m, timing_secretp)) != 0 ||
+	    (r = sshbuf_froms(m, hostkeysp)) != 0 ||
+	    (r = sshbuf_get_stringb(m, ssh->kex->server_version)) != 0 ||
+	    (r = sshbuf_get_stringb(m, ssh->kex->client_version)) != 0 ||
+	    (r = sshbuf_get_stringb(m, inc)) != 0)
+		fatal_fr(r, "parse config");
+
+	/* postauth */
+	if (confdatap) {
+		if ((r = sshbuf_froms(m, confdatap)) != 0 ||
+		    (r = sshbuf_froms(m, keystatep)) != 0 ||
+		    (r = sshbuf_get_string(m, pw_namep, NULL)) != 0 ||
+		    (r = sshbuf_froms(m, authinfop)) != 0 ||
+		    (r = sshbuf_froms(m, auth_optsp)) != 0)
+			fatal_fr(r, "parse config postauth");
+	}
+
+	if (conf != NULL && (r = sshbuf_put(conf, cp, len)))
+		fatal_fr(r, "sshbuf_put");
+
+	while (sshbuf_len(inc) != 0) {
+		item = xcalloc(1, sizeof(*item));
+		if ((item->contents = sshbuf_new()) == NULL)
+			fatal_f("sshbuf_new failed");
+		if ((r = sshbuf_get_cstring(inc, &item->selector, NULL)) != 0 ||
+		    (r = sshbuf_get_cstring(inc, &item->filename, NULL)) != 0 ||
+		    (r = sshbuf_get_stringb(inc, item->contents)) != 0)
+			fatal_fr(r, "parse includes");
+		TAILQ_INSERT_TAIL(includes, item, entry);
+	}
+
+	free(cp);
+	sshbuf_free(m);
+	sshbuf_free(inc);
+
+	debug3_f("done");
 }
 
 static void

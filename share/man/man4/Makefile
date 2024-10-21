@@ -1,4 +1,4 @@
-#	$OpenBSD: Makefile,v 1.848 2024/04/29 20:18:12 kn Exp $
+#	$OpenBSD: Makefile,v 1.851 2024/09/04 11:12:53 jsg Exp $
 
 MAN=	aac.4 abcrtc.4 abl.4 ac97.4 acphy.4 acrtc.4 \
 	acpi.4 acpiac.4 acpials.4 acpiasus.4 acpibat.4 \
@@ -47,7 +47,8 @@ MAN=	aac.4 abcrtc.4 abl.4 ac97.4 acphy.4 acrtc.4 \
 	igc.4 iha.4 ihidev.4 iic.4 iicmux.4 ikbd.4 ims.4 imt.4 imxanatop.4 \
 	imxdog.4 imxesdhc.4 imxgpc.4 imxgpio.4 imxiic.4 imxpciephy.4 \
 	imxpwm.4 imxrtc.4 imxspi.4 imxsrc.4 imxtmu.4 imxuart.4 \
-	inet.4 inet6.4 inphy.4 iophy.4 iosf.4 ip.4 ip6.4 ipcomp.4 ipgphy.4 \
+	inet.4 inet6.4 inphy.4 intelpmc.4 \
+	iophy.4 iosf.4 ip.4 ip6.4 ipcomp.4 ipgphy.4 \
 	ipmi.4 ips.4 ipsec.4 ipw.4 isa.4 isagpio.4 isapnp.4 islrtc.4 \
 	it.4 itherm.4 iwi.4 iwn.4 iwm.4 iwx.4 ix.4 ixgb.4 ixl.4 \
 	jmb.4 jme.4 jmphy.4 \
@@ -71,7 +72,7 @@ MAN=	aac.4 abcrtc.4 abl.4 ac97.4 acphy.4 acrtc.4 \
 	pcmcia.4 pcn.4 pcppi.4 pcscp.4 pcxrtc.4 pcyrtc.4 \
 	pf.4 pflog.4 pflow.4 pfsync.4 \
 	pgt.4 piixpm.4 pijuice.4 pinctrl.4 pipex.4 plgpio.4 plrtc.4 pluart.4 \
-	pms.4 ppb.4 ppp.4 pppoe.4 pppx.4 psci.4 pty.4 puc.4 pvbus.4 \
+	pms.4 ppb.4 ppp.4 pppoe.4 pppx.4 psci.4 psp.4 pty.4 puc.4 pvbus.4 \
 	pvclock.4 pwdog.4 pwmbl.4 pwmfan.4 pwmleds.4 pwmreg.4 \
 	qccpu.4 qcdwusb.4 qcgpio.4 qciic.4 qcpdc.4 qcpmic.4 qcpmicgpio.4 \
 	qcpon.4 qcpwm.4 qcrng.4 qcrtc.4 qcspmi.4 \
@@ -82,7 +83,7 @@ MAN=	aac.4 abcrtc.4 abl.4 ac97.4 acphy.4 acrtc.4 \
 	rkemmcphy.4 rkgpio.4 rkgrf.4 rkiic.4 rkiis.4 rkiovd.4 \
 	rkpcie.4 rkpciephy.4 rkpinctrl.4 rkpmic.4 rkpwm.4 \
 	rkrng.4 rkspi.4 rktcphy.4 rktemp.4 rkusbphy.4 rkvop.4 \
-	rl.4 rlphy.4 route.4 rsu.4 rtsx.4 rum.4 run.4 rtw.4 rtwn.4 \
+	rl.4 rlphy.4 route.4 rport.4 rsu.4 rtsx.4 rum.4 run.4 rtw.4 rtwn.4 \
 	safte.4 sbus.4 schsio.4 scmi.4 scsi.4 sd.4 \
 	sdmmc.4 sdhc.4 se.4 sec.4 ses.4 sf.4 sili.4 \
 	simpleamp.4 simpleaudio.4 simplefb.4 simplepanel.4 siop.4 sis.4 sk.4 \

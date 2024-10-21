@@ -1,4 +1,4 @@
-/*	$OpenBSD: nfs_syscalls.c,v 1.126 2024/05/01 13:15:59 jsg Exp $	*/
+/*	$OpenBSD: nfs_syscalls.c,v 1.128 2024/09/18 05:21:19 jsg Exp $	*/
 /*	$NetBSD: nfs_syscalls.c,v 1.19 1996/02/18 11:53:52 fvdl Exp $	*/
 
 /*
@@ -302,7 +302,8 @@ nfssvc_addsock(struct file *fp, struct mbuf *mynam)
 	return (0);
 }
 
-static inline int nfssvc_checknam(struct mbuf *nam)
+static inline int
+nfssvc_checknam(struct mbuf *nam)
 {
 	struct sockaddr_in *sin;
 
@@ -468,7 +469,7 @@ loop:
 		m_freem(nd->nd_mrep);
 		m_freem(nd->nd_nam2);
 		break;
-	};
+	}
 
 	if (nd) {
 		pool_put(&nfsrv_descript_pl, nd);

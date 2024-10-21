@@ -31,7 +31,7 @@
 
 *******************************************************************************/
 
-/* $OpenBSD: if_em_hw.c,v 1.121 2024/05/24 06:02:53 jsg Exp $ */
+/* $OpenBSD: if_em_hw.c,v 1.123 2024/09/04 07:54:52 mglocker Exp $ */
 /*
  * if_em_hw.c Shared functions for accessing and configuring the MAC
  */
@@ -3039,7 +3039,7 @@ em_copper_link_rtl8211_setup(struct em_hw *hw)
 		return ret_val;
 	}
 
-	/* pulse streching= 42-84ms, blink rate=84mm */
+	/* pulse stretching= 42-84ms, blink rate=84mm */
 	phy_data = 0x140 | RGEPHY_LC_PULSE_42MS | RGEPHY_LC_LINK | 
 	    RGEPHY_LC_DUPLEX | RGEPHY_LC_RX;
 
@@ -4271,7 +4271,7 @@ em_check_for_link(struct em_hw *hw)
 	ctrl = E1000_READ_REG(hw, CTRL);
 	status = E1000_READ_REG(hw, STATUS);
 	/*
-	 * On adapters with a MAC newer than 82544, SW Defineable pin 1 will
+	 * On adapters with a MAC newer than 82544, SW Definable pin 1 will
 	 * be set when the optics detect a signal. On older adapters, it will
 	 * be cleared when there is a signal.  This applies to fiber media
 	 * only.
@@ -5515,7 +5515,8 @@ em_write_kmrn_reg(struct em_hw *hw, uint32_t reg_addr, uint16_t data)
  *  Called to determine if the I2C pins are being used for I2C or as an
  *  external MDIO interface since the two options are mutually exclusive.
  **/
-int em_sgmii_uses_mdio_82575(struct em_hw *hw)
+int
+em_sgmii_uses_mdio_82575(struct em_hw *hw)
 {
 	uint32_t reg = 0;
 	int ext_mdio = 0;
@@ -5549,7 +5550,8 @@ int em_sgmii_uses_mdio_82575(struct em_hw *hw)
  *  Reads the PHY register at offset using the i2c interface and stores the
  *  retrieved information in data.
  **/
-int32_t em_read_phy_reg_i2c(struct em_hw *hw, uint32_t offset, uint16_t *data)
+int32_t
+em_read_phy_reg_i2c(struct em_hw *hw, uint32_t offset, uint16_t *data)
 {
 	uint32_t i, i2ccmd = 0;
 
@@ -5595,7 +5597,8 @@ int32_t em_read_phy_reg_i2c(struct em_hw *hw, uint32_t offset, uint16_t *data)
  *
  *  Writes the data to PHY register at the offset using the i2c interface.
  **/
-int32_t em_write_phy_reg_i2c(struct em_hw *hw, uint32_t offset, uint16_t data)
+int32_t
+em_write_phy_reg_i2c(struct em_hw *hw, uint32_t offset, uint16_t data)
 {
 	uint32_t i, i2ccmd = 0;
 	uint16_t phy_data_swapped;
@@ -5655,7 +5658,8 @@ int32_t em_write_phy_reg_i2c(struct em_hw *hw, uint32_t offset, uint16_t data)
  *  E1000_I2CCMD_SFP_DIAG_ADDR(<byte offset>) for SFP diagnostics parameters
  *  access
  **/
-int32_t em_read_sfp_data_byte(struct em_hw *hw, uint16_t offset, uint8_t *data)
+int32_t
+em_read_sfp_data_byte(struct em_hw *hw, uint16_t offset, uint8_t *data)
 {
 	uint32_t i = 0;
 	uint32_t i2ccmd = 0;

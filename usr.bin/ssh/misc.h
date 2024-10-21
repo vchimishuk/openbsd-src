@@ -1,4 +1,4 @@
-/* $OpenBSD: misc.h,v 1.108 2024/05/17 00:30:24 djm Exp $ */
+/* $OpenBSD: misc.h,v 1.110 2024/09/25 01:24:04 djm Exp $ */
 
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -56,6 +56,7 @@ struct ForwardOptions {
 char	*chop(char *);
 void	 rtrim(char *);
 void	skip_space(char **);
+const char *strprefix(const char *, const char *, int);
 char	*strdelim(char **);
 char	*strdelimw(char **);
 int	 set_nonblock(int);
@@ -250,6 +251,7 @@ void	notify_complete(struct notifier_ctx *, const char *, ...)
 
 typedef void (*sshsig_t)(int);
 sshsig_t ssh_signal(int, sshsig_t);
+int signal_is_crash(int);
 
 /* On OpenBSD time_t is int64_t which is long long. */
 #define SSH_TIME_T_MAX LLONG_MAX

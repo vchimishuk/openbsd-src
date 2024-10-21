@@ -1,4 +1,4 @@
-/*	$OpenBSD: sdhc.c,v 1.76 2023/10/01 08:56:24 kettenis Exp $	*/
+/*	$OpenBSD: sdhc.c,v 1.78 2024/10/19 21:10:03 hastings Exp $	*/
 
 /*
  * Copyright (c) 2006 Uwe Stuehler <uwe@openbsd.org>
@@ -591,14 +591,9 @@ sdhc_bus_power(sdmmc_chipset_handle_t sch, u_int32_t ocr)
 
 	s = splsdmmc();
 
-	/*
-	 * Disable bus power before voltage change.
-	 */
-	if (!(hp->sc->sc_flags & SDHC_F_NOPWR0))
-		HWRITE1(hp, SDHC_POWER_CTL, 0);
-
 	/* If power is disabled, reset the host and return now. */
 	if (ocr == 0) {
+		HWRITE1(hp, SDHC_POWER_CTL, 0);
 		splx(s);
 		(void)sdhc_host_reset(hp);
 		return 0;
@@ -619,6 +614,21 @@ sdhc_bus_power(sdmmc_chipset_handle_t sch, u_int32_t ocr)
 		splx(s);
 		return EINVAL;
 	}
+
+	/*
+	 * Return if no change to powered bus voltage.
+	 */
+	if (HREAD1(hp, SDHC_POWER_CTL) ==
+	    ((vdd << SDHC_VOLTAGE_SHIFT) | SDHC_BUS_POWER)) {
+		splx(s);
+		return 0;
+	}
+
+	/*
+	 * Disable bus power before voltage change.
+	 */
+	if (!(hp->sc->sc_flags & SDHC_F_NOPWR0))
+		HWRITE1(hp, SDHC_POWER_CTL, 0);
 
 	/*
 	 * Enable bus power.  Wait at least 1 ms (or 74 clocks) plus
@@ -1056,6 +1066,9 @@ sdhc_start_command(struct sdhc_host *hp, struct sdmmc_command *cmd)
 
 	DPRINTF(1,("%s: cmd=%#x mode=%#x blksize=%d blkcount=%d\n",
 	    DEVNAME(hp->sc), command, mode, blksize, blkcount));
+
+	/* We're starting a new command, reset state. */
+	hp->intr_status = 0;
 
 	/*
 	 * Start a CPU data transfer.  Writing to the high order byte

@@ -1,4 +1,4 @@
-/*	$OpenBSD: validate.c,v 1.74 2024/05/20 15:51:43 claudio Exp $ */
+/*	$OpenBSD: validate.c,v 1.77 2024/10/16 06:09:45 tb Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -304,6 +304,7 @@ build_chain(const struct auth *a, STACK_OF(X509) **intermediates,
 	*intermediates = NULL;
 	*root = NULL;
 
+	/* XXX - this should be removed, but filemode relies on it. */
 	if (a == NULL)
 		return;
 
@@ -586,7 +587,7 @@ valid_uuid(const char *s)
 static int
 valid_ca_pkey_rsa(const char *fn, EVP_PKEY *pkey)
 {
-	RSA		*rsa;
+	const RSA	*rsa;
 	const BIGNUM	*rsa_e;
 	int		 key_bits;
 
@@ -617,7 +618,7 @@ valid_ca_pkey_rsa(const char *fn, EVP_PKEY *pkey)
 static int
 valid_ca_pkey_ec(const char *fn, EVP_PKEY *pkey)
 {
-	EC_KEY		*ec;
+	const EC_KEY	*ec;
 	const EC_GROUP	*group;
 	int		 nid;
 	const char	*cname;

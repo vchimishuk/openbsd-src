@@ -1,4 +1,4 @@
-/*	$OpenBSD: relayd.h,v 1.272 2024/05/18 06:34:46 jsg Exp $	*/
+/*	$OpenBSD: relayd.h,v 1.275 2024/10/08 05:28:11 jsg Exp $	*/
 
 /*
  * Copyright (c) 2006 - 2016 Reyk Floeter <reyk@openbsd.org>
@@ -57,9 +57,7 @@
 #define LABEL_NAME_SIZE		1024
 #define TAG_NAME_SIZE		64
 #define TABLE_NAME_SIZE		64
-#define	RD_TAG_NAME_SIZE	64
 #define	RT_LABEL_SIZE		32
-#define SRV_NAME_SIZE		64
 #define MAX_NAME_SIZE		64
 #define SRV_MAX_VIRTS		16
 #define TLS_NAME_SIZE		512
@@ -402,6 +400,7 @@ union hashkey {
 #define F_TLSINSPECT		0x04000000
 #define F_HASHKEY		0x08000000
 #define F_AGENTX_TRAPONLY	0x10000000
+#define F_PFLOG			0x20000000
 
 #define F_BITS								\
 	"\10\01DISABLE\02BACKUP\03USED\04DOWN\05ADD\06DEL\07CHANGED"	\
@@ -544,8 +543,8 @@ struct rdr_config {
 	objid_t			 backup_id;
 	int			 mode;
 	union hashkey		 key;
-	char			 name[SRV_NAME_SIZE];
-	char			 tag[RD_TAG_NAME_SIZE];
+	char			 name[PF_TABLE_NAME_SIZE];
+	char			 tag[PF_TAG_NAME_SIZE];
 	struct timeval		 timeout;
 };
 
@@ -913,11 +912,6 @@ struct control_sock {
 	TAILQ_ENTRY(control_sock) cs_entry;
 };
 TAILQ_HEAD(control_socks, control_sock);
-
-extern struct {
-	struct event	 ev;
-	int		 fd;
-} control_state;
 
 struct imsgev {
 	struct imsgbuf		 ibuf;

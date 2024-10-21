@@ -1,4 +1,4 @@
-/* $OpenBSD: misc.c,v 1.195 2024/05/17 06:11:17 deraadt Exp $ */
+/* $OpenBSD: misc.c,v 1.197 2024/09/25 01:24:04 djm Exp $ */
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
  * Copyright (c) 2005-2020 Damien Miller.  All rights reserved.
@@ -85,6 +85,27 @@ rtrim(char *s)
 		if (isspace((unsigned char)s[i]))
 			s[i] = '\0';
 	}
+}
+
+/*
+ * returns pointer to character after 'prefix' in 's' or otherwise NULL
+ * if the prefix is not present.
+ */
+const char *
+strprefix(const char *s, const char *prefix, int ignorecase)
+{
+	size_t prefixlen;
+
+	if ((prefixlen = strlen(prefix)) == 0)
+		return s;
+	if (ignorecase) {
+		if (strncasecmp(s, prefix, prefixlen) != 0)
+			return NULL;
+	} else {
+		if (strncmp(s, prefix, prefixlen) != 0)
+			return NULL;
+	}
+	return s + prefixlen;
 }
 
 /* set/unset filedescriptor to non-blocking */
@@ -2946,4 +2967,20 @@ lib_contains_symbol(const char *path, const char *s)
  out:
 	free(nl[0].n_name);
 	return ret;
+}
+
+int
+signal_is_crash(int sig)
+{
+	switch (sig) {
+	case SIGSEGV:
+	case SIGBUS:
+	case SIGTRAP:
+	case SIGSYS:
+	case SIGFPE:
+	case SIGILL:
+	case SIGABRT:
+		return 1;
+	}
+	return 0;
 }

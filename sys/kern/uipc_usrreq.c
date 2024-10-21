@@ -1,4 +1,4 @@
-/*	$OpenBSD: uipc_usrreq.c,v 1.206 2024/05/03 17:43:09 mvs Exp $	*/
+/*	$OpenBSD: uipc_usrreq.c,v 1.210 2024/09/22 08:40:37 claudio Exp $	*/
 /*	$NetBSD: uipc_usrreq.c,v 1.18 1996/02/09 19:00:50 christos Exp $	*/
 
 /*
@@ -234,13 +234,13 @@ uipc_setaddr(const struct unpcb *unp, struct mbuf *nam)
  * and don't really want to reserve the sendspace.  Their recvspace should
  * be large enough for at least one max-size datagram plus address.
  */
-#define	PIPSIZ	8192
-u_int	unpst_sendspace = PIPSIZ;
-u_int	unpst_recvspace = PIPSIZ;
-u_int	unpsq_sendspace = PIPSIZ;
-u_int	unpsq_recvspace = PIPSIZ;
-u_int	unpdg_sendspace = 2*1024;	/* really max datagram size */
-u_int	unpdg_recvspace = 16*1024;
+#define	PIPSIZ	32768
+u_int	unpst_sendspace = PIPSIZ;	/* [a] */
+u_int	unpst_recvspace = PIPSIZ;	/* [a] */
+u_int	unpsq_sendspace = PIPSIZ;	/* [a] */
+u_int	unpsq_recvspace = PIPSIZ;	/* [a] */
+u_int	unpdg_sendspace = 8192;		/* [a] really max datagram size */
+u_int	unpdg_recvspace = PIPSIZ;	/* [a] */
 
 const struct sysctl_bounded_args unpstctl_vars[] = {
 	{ UNPCTL_RECVSPACE, &unpst_recvspace, 0, SB_MAX },
@@ -267,15 +267,21 @@ uipc_attach(struct socket *so, int proto, int wait)
 		switch (so->so_type) {
 
 		case SOCK_STREAM:
-			error = soreserve(so, unpst_sendspace, unpst_recvspace);
+			error = soreserve(so,
+			    atomic_load_int(&unpst_sendspace),
+			    atomic_load_int(&unpst_recvspace));
 			break;
 
 		case SOCK_SEQPACKET:
-			error = soreserve(so, unpsq_sendspace, unpsq_recvspace);
+			error = soreserve(so,
+			    atomic_load_int(&unpsq_sendspace),
+			    atomic_load_int(&unpsq_recvspace));
 			break;
 
 		case SOCK_DGRAM:
-			error = soreserve(so, unpdg_sendspace, unpdg_recvspace);
+			error = soreserve(so,
+			    atomic_load_int(&unpdg_sendspace),
+			    atomic_load_int(&unpdg_recvspace));
 			break;
 
 		default:
@@ -513,6 +519,14 @@ uipc_send(struct socket *so, struct mbuf *m, struct mbuf *nam,
 			goto out;
 	}
 
+	/*
+	 * We hold both solock() and `sb_mtx' mutex while modifying
+	 * SS_CANTSENDMORE flag. solock() is enough to check it.
+	 */
+	if (so->so_snd.sb_state & SS_CANTSENDMORE) {
+		error = EPIPE;
+		goto dispose;
+	}
 	if (unp->unp_conn == NULL) {
 		error = ENOTCONN;
 		goto dispose;
@@ -531,12 +545,6 @@ uipc_send(struct socket *so, struct mbuf *m, struct mbuf *nam,
 	 */
 	mtx_enter(&so2->so_rcv.sb_mtx);
 	mtx_enter(&so->so_snd.sb_mtx);
-	if (so->so_snd.sb_state & SS_CANTSENDMORE) {
-		mtx_leave(&so->so_snd.sb_mtx);
-		mtx_leave(&so2->so_rcv.sb_mtx);
-		error = EPIPE;
-		goto dispose;
-	}
 	if (control) {
 		if (sbappendcontrol(so2, &so2->so_rcv, m, control)) {
 			control = NULL;
@@ -761,25 +769,21 @@ unp_detach(struct unpcb *unp)
 
 	unp->unp_vnode = NULL;
 
-	/*
-	 * Enforce `i_lock' -> `solock()' lock order.
-	 */
-	sounlock(so);
-
 	rw_enter_write(&unp_gc_lock);
 	LIST_REMOVE(unp, unp_link);
 	rw_exit_write(&unp_gc_lock);
 
 	if (vp != NULL) {
+		/* Enforce `i_lock' -> solock() lock order. */
+		sounlock(so);
 		VOP_LOCK(vp, LK_EXCLUSIVE);
 		vp->v_socket = NULL;
 
 		KERNEL_LOCK();
 		vput(vp);
 		KERNEL_UNLOCK();
+		solock(so);
 	}
-
-	solock(so);
 
 	if (unp->unp_conn != NULL) {
 		/*

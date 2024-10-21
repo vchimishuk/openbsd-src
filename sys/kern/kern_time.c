@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_time.c,v 1.167 2023/10/17 00:04:02 cheloha Exp $	*/
+/*	$OpenBSD: kern_time.c,v 1.170 2024/10/03 10:18:29 claudio Exp $	*/
 /*	$NetBSD: kern_time.c,v 1.20 1996/02/18 11:57:06 fvdl Exp $	*/
 
 /*
@@ -40,6 +40,7 @@
 #include <sys/rwlock.h>
 #include <sys/proc.h>
 #include <sys/ktrace.h>
+#include <sys/resourcevar.h>
 #include <sys/signalvar.h>
 #include <sys/stdint.h>
 #include <sys/pledge.h>
@@ -112,6 +113,7 @@ settime(const struct timespec *ts)
 int
 clock_gettime(struct proc *p, clockid_t clock_id, struct timespec *tp)
 {
+	struct tusage tu;
 	struct proc *q;
 	int error = 0;
 
@@ -128,13 +130,15 @@ clock_gettime(struct proc *p, clockid_t clock_id, struct timespec *tp)
 		break;
 	case CLOCK_PROCESS_CPUTIME_ID:
 		nanouptime(tp);
+		tuagg_get_process(&tu, p->p_p);
 		timespecsub(tp, &curcpu()->ci_schedstate.spc_runtime, tp);
-		timespecadd(tp, &p->p_p->ps_tu.tu_runtime, tp);
+		timespecadd(tp, &tu.tu_runtime, tp);
 		break;
 	case CLOCK_THREAD_CPUTIME_ID:
 		nanouptime(tp);
+		tuagg_get_proc(&tu, p);
 		timespecsub(tp, &curcpu()->ci_schedstate.spc_runtime, tp);
-		timespecadd(tp, &p->p_tu.tu_runtime, tp);
+		timespecadd(tp, &tu.tu_runtime, tp);
 		break;
 	default:
 		/* check for clock from pthread_getcpuclockid() */
@@ -143,8 +147,10 @@ clock_gettime(struct proc *p, clockid_t clock_id, struct timespec *tp)
 			q = tfind_user(__CLOCK_PTID(clock_id), p->p_p);
 			if (q == NULL)
 				error = ESRCH;
-			else
-				*tp = q->p_tu.tu_runtime;
+			else {
+				tuagg_get_proc(&tu, q);
+				*tp = tu.tu_runtime;
+			}
 			KERNEL_UNLOCK();
 		} else
 			error = EINVAL;
@@ -598,7 +604,7 @@ sys_getitimer(struct proc *p, void *v, register_t *retval)
 		syscallarg(struct itimerval *) itv;
 	} */ *uap = v;
 	struct itimerval aitv;
-	int which;
+	int which, error;
 
 	which = SCARG(uap, which);
 	if (which < ITIMER_REAL || which > ITIMER_PROF)
@@ -608,7 +614,12 @@ sys_getitimer(struct proc *p, void *v, register_t *retval)
 
 	setitimer(which, NULL, &aitv);
 
-	return copyout(&aitv, SCARG(uap, itv), sizeof(aitv));
+	error = copyout(&aitv, SCARG(uap, itv), sizeof(aitv));
+#ifdef KTRACE
+	if (error == 0 && KTRPOINT(p, KTR_STRUCT))
+		ktritimerval(p, &aitv);
+#endif
+	return (error);
 }
 
 int
@@ -632,6 +643,10 @@ sys_setitimer(struct proc *p, void *v, register_t *retval)
 		error = copyin(SCARG(uap, itv), &aitv, sizeof(aitv));
 		if (error)
 			return error;
+#ifdef KTRACE
+		if (KTRPOINT(p, KTR_STRUCT))
+			ktritimerval(p, &aitv);
+#endif
 		error = itimerfix(&aitv);
 		if (error)
 			return error;
@@ -646,8 +661,14 @@ sys_setitimer(struct proc *p, void *v, register_t *retval)
 
 	setitimer(which, newitvp, olditvp);
 
-	if (SCARG(uap, oitv) != NULL)
-		return copyout(&olditv, SCARG(uap, oitv), sizeof(olditv));
+	if (SCARG(uap, oitv) != NULL) {
+		error = copyout(&olditv, SCARG(uap, oitv), sizeof(olditv));
+#ifdef KTRACE
+		if (error == 0 && KTRPOINT(p, KTR_STRUCT))
+			ktritimerval(p, &aitv);
+#endif
+		return error;
+	}
 
 	return 0;
 }

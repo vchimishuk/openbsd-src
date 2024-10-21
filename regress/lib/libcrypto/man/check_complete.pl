@@ -20,7 +20,7 @@ use warnings;
 my %internal = (
     asn1 => [qw(
 	ASN1_ENCODING
-	ASN1_STRING_FLAG_BITS_LEFT ASN1_STRING_FLAG_CONT
+	ASN1_STRING_FLAG_CONT
 	ASN1_STRING_FLAG_MSTRING ASN1_STRING_FLAG_NDEF
 	CHARTYPE_FIRST_ESC_2253 CHARTYPE_LAST_ESC_2253 CHARTYPE_PRINTABLESTRING
     )],
@@ -34,9 +34,6 @@ my %internal = (
         EVP_MD_CTRL_ALG_CTRL
         EVP_MD_CTX_FLAG_CLEANED EVP_MD_CTX_FLAG_REUSE
     )],
-    objects => [qw(
-	OBJ_bsearch_ OBJ_bsearch_ex_
-    )],
     x509_vfy => [qw(
 	X509_VERIFY_PARAM_ID
     )]
@@ -49,7 +46,6 @@ my %obsolete = (
 	ASN1_i2d_fp ASN1_i2d_fp_of ASN1_i2d_fp_of_const
 	ASN1_LONG_UNDEF
 	BIT_STRING_BITNAME
-	ub_title
 	V_ASN1_PRIMATIVE_TAG
 	X509_algor_st
     )],
@@ -92,15 +88,7 @@ my %postponed = (
 	TYPEDEF_D2I_OF TYPEDEF_D2I2D_OF TYPEDEF_I2D_OF
     )],
     x509 => [qw(
-	d2i_PBEPARAM d2i_PBE2PARAM d2i_PBKDF2PARAM
-	i2d_PBEPARAM i2d_PBE2PARAM i2d_PBKDF2PARAM
-	NETSCAPE_SPKAC NETSCAPE_SPKI
-	PBEPARAM PBEPARAM_free PBEPARAM_new
-	PBE2PARAM PBE2PARAM_free PBE2PARAM_new
-	PBKDF2PARAM PBKDF2PARAM_free PBKDF2PARAM_new
-	PKCS5_pbe_set PKCS5_pbe_set0_algor
-	PKCS5_pbe2_set PKCS5_pbe2_set_iv
-	PKCS5_pbkdf2_set
+	NETSCAPE_SPKAC NETSCAPE_SPKI PBEPARAM
     )]
 );
 
@@ -232,6 +220,7 @@ try_again:
 	    /^#define HEADER_\w+_H$/ ||
 	    /^#endif$/ ||
 	    /^#else$/ ||
+	    /^#error/ ||
 	    /^extern\s+const\s+ASN1_ITEM\s+\w+_it;$/ ||
 	    /^#\s*include\s/ ||
 	    /^#ifn?def\s/ ||

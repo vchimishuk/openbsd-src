@@ -1,4 +1,4 @@
-/*	$OpenBSD: evp_names.c,v 1.16 2024/04/09 13:52:41 beck Exp $ */
+/*	$OpenBSD: evp_names.c,v 1.18 2024/08/31 10:38:49 tb Exp $ */
 /*
  * Copyright (c) 2023 Theo Buehler <tb@openbsd.org>
  *
@@ -1010,7 +1010,7 @@ static const struct cipher_name cipher_names[] = {
 
 /*
  * Keep this table alphabetically sorted by increasing .name.
- * regresss/lib/libcrypto/evp/evp_test.c checks that.
+ * regress/lib/libcrypto/evp/evp_test.c checks that.
  */
 
 static const struct digest_name digest_names[] = {
@@ -1463,11 +1463,6 @@ static const struct digest_name digest_names[] = {
 		.name = "ssl3-sha1",
 		.digest = EVP_sha1,
 		.alias = SN_sha1,
-	},
-
-	{
-		.name = SN_whirlpool,
-		.digest = EVP_whirlpool,
 	},
 };
 

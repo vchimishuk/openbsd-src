@@ -1,4 +1,4 @@
-/*	$OpenBSD: bgpd.h,v 1.493 2024/05/18 11:17:30 jsg Exp $ */
+/*	$OpenBSD: bgpd.h,v 1.498 2024/10/08 12:28:09 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -33,6 +33,8 @@
 #include <imsg.h>
 
 #define	BGP_VERSION			4
+#define	RTR_MAX_VERSION			2
+#define	RTR_DEFAULT_VERSION		1
 #define	BGP_PORT			179
 #define	RTR_PORT			323
 #define	CONFFILE			"/etc/bgpd.conf"
@@ -99,6 +101,7 @@
 #define	F_CTL_AVS_VALID		0x1000000
 #define	F_CTL_AVS_INVALID	0x2000000
 #define	F_CTL_AVS_UNKNOWN	0x4000000
+#define	F_CTL_FILTERED		0x8000000	/* only set on requests */
 #define	F_CTL_SSV		0x80000000	/* only used by bgpctl */
 
 #define CTASSERT(x)	extern char  _ctassert[(x) ? 1 : -1 ] \
@@ -315,6 +318,7 @@ struct bgpd_config {
 	uint16_t				 min_holdtime;
 	uint16_t				 connectretry;
 	uint8_t					 fib_priority;
+	uint8_t					 filtered_in_locrib;
 };
 
 extern int cmd_opts;
@@ -375,7 +379,7 @@ enum auth_enc_alg {
 	AUTH_EALG_AES,
 };
 
-struct peer_auth {
+struct auth_config {
 	char			md5key[TCP_MD5_KEY_LEN];
 	char			auth_key_in[IPSEC_AUTH_KEY_LEN];
 	char			auth_key_out[IPSEC_AUTH_KEY_LEN];
@@ -448,7 +452,6 @@ struct peer_config {
 	struct bgpd_addr	 remote_addr;
 	struct bgpd_addr	 local_addr_v4;
 	struct bgpd_addr	 local_addr_v6;
-	struct peer_auth	 auth;
 	struct capabilities	 capabilities;
 	struct addpath_eval	 eval;
 	char			 group[PEER_DESCR_LEN];
@@ -566,15 +569,24 @@ enum rtr_error {
 struct rtr_config {
 	SIMPLEQ_ENTRY(rtr_config)	entry;
 	char				descr[PEER_DESCR_LEN];
+	struct auth_config		auth;
 	struct bgpd_addr		remote_addr;
 	struct bgpd_addr		local_addr;
 	uint32_t			id;
 	uint16_t			remote_port;
+	uint8_t				min_version;
+};
+
+struct rtr_config_msg {
+	char				descr[PEER_DESCR_LEN];
+	uint8_t				min_version;
 };
 
 struct ctl_show_rtr {
 	char			descr[PEER_DESCR_LEN];
 	char			state[PEER_DESCR_LEN];
+	char			last_sent_msg[REASON_LEN];
+	char			last_recv_msg[REASON_LEN];
 	struct bgpd_addr	remote_addr;
 	struct bgpd_addr	local_addr;
 	uint32_t		serial;
@@ -582,12 +594,11 @@ struct ctl_show_rtr {
 	uint32_t		retry;
 	uint32_t		expire;
 	int			session_id;
-	uint16_t		remote_port;
-	uint8_t			version;
 	enum rtr_error		last_sent_error;
 	enum rtr_error		last_recv_error;
-	char			last_sent_msg[REASON_LEN];
-	char			last_recv_msg[REASON_LEN];
+	uint16_t		remote_port;
+	uint8_t			version;
+	uint8_t			min_version;
 };
 
 enum imsg_type {
@@ -635,9 +646,12 @@ enum imsg_type {
 	IMSG_SOCKET_CONN,
 	IMSG_SOCKET_CONN_CTL,
 	IMSG_SOCKET_CONN_RTR,
+	IMSG_SOCKET_SETUP,
+	IMSG_SOCKET_TEARDOWN,
 	IMSG_RECONF_CONF,
 	IMSG_RECONF_RIB,
 	IMSG_RECONF_PEER,
+	IMSG_RECONF_PEER_AUTH,
 	IMSG_RECONF_FILTER,
 	IMSG_RECONF_LISTENER,
 	IMSG_RECONF_CTRL,
@@ -879,6 +893,7 @@ struct ctl_neighbor {
 #define	F_PREF_OTC_LEAK	0x080
 #define	F_PREF_ECMP	0x100
 #define	F_PREF_AS_WIDE	0x200
+#define	F_PREF_FILTERED	0x400
 
 struct ctl_show_rib {
 	struct bgpd_addr	true_nexthop;
@@ -1404,6 +1419,7 @@ void		 send_imsg_session(int, pid_t, void *, uint16_t);
 int		 send_network(int, struct network_config *,
 		    struct filter_set_head *);
 int		 bgpd_oknexthop(struct kroute_full *);
+int		 bgpd_has_bgpnh(void);
 void		 set_pollfd(struct pollfd *, struct imsgbuf *);
 int		 handle_pollfd(struct pollfd *, struct imsgbuf *);
 

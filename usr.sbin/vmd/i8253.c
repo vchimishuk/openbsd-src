@@ -1,4 +1,4 @@
-/* $OpenBSD: i8253.c,v 1.39 2024/02/09 14:35:47 dv Exp $ */
+/* $OpenBSD: i8253.c,v 1.42 2024/09/26 01:45:13 jsg Exp $ */
 /*
  * Copyright (c) 2016 Mike Larkin <mlarkin@openbsd.org>
  *
@@ -19,18 +19,15 @@
 #include <sys/types.h>
 
 #include <dev/ic/i8253reg.h>
-
-#include <machine/vmmvar.h>
+#include <dev/vmm/vmm.h>
 
 #include <event.h>
 #include <string.h>
-#include <stddef.h>
 #include <time.h>
 #include <unistd.h>
 
 #include "i8253.h"
 #include "vmd.h"
-#include "vmm.h"
 #include "atomicio.h"
 
 extern char *__progname;
@@ -370,7 +367,7 @@ i8253_fire(int fd, short type, void *arg)
 	struct timeval tv;
 	struct i8253_channel *ctr = (struct i8253_channel *)arg;
 
-	vcpu_assert_pic_irq(ctr->vm_id, 0, 0);
+	vcpu_assert_irq(ctr->vm_id, 0, 0);
 
 	if (ctr->mode != TIMER_INTTC) {
 		timerclear(&tv);

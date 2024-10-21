@@ -1,4 +1,4 @@
-/* $OpenBSD: server-client.c,v 1.405 2024/04/10 07:29:15 nicm Exp $ */
+/* $OpenBSD: server-client.c,v 1.414 2024/10/08 06:29:44 nicm Exp $ */
 
 /*
  * Copyright (c) 2009 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -46,8 +46,6 @@ static void	server_client_check_modes(struct client *);
 static void	server_client_set_title(struct client *);
 static void	server_client_set_path(struct client *);
 static void	server_client_reset_state(struct client *);
-static int 	server_client_is_bracket_pasting(struct client *, key_code);
-static int	server_client_assume_paste(struct session *);
 static void	server_client_update_latest(struct client *);
 
 static void	server_client_dispatch(struct imsg *, void *);
@@ -123,6 +121,7 @@ server_client_set_overlay(struct client *c, u_int delay,
 		c->tty.flags |= TTY_FREEZE;
 	if (c->overlay_mode == NULL)
 		c->tty.flags |= TTY_NOCURSOR;
+	window_update_focus(c->session->curw->window);
 	server_redraw_client(c);
 }
 
@@ -147,6 +146,7 @@ server_client_clear_overlay(struct client *c)
 	c->overlay_data = NULL;
 
 	c->tty.flags &= ~(TTY_FREEZE|TTY_NOCURSOR);
+	window_update_focus(c->session->curw->window);
 	server_redraw_client(c);
 }
 
@@ -226,6 +226,17 @@ server_client_set_key_table(struct client *c, const char *name)
 	key_bindings_unref_table(c->keytable);
 	c->keytable = key_bindings_get_table(name, 1);
 	c->keytable->references++;
+	if (gettimeofday(&c->keytable->activity_time, NULL) != 0)
+		fatal("gettimeofday failed");
+}
+
+static uint64_t
+server_client_key_table_activity_diff(struct client *c)
+{
+	struct timeval	diff;
+
+	timersub(&c->activity_time, &c->keytable->activity_time, &diff);
+	return ((diff.tv_sec * 1000ULL) + (diff.tv_usec / 1000ULL));
 }
 
 /* Get default key table. */
@@ -783,8 +794,7 @@ have_event:
 			log_debug("mouse on pane %%%u border", wp->id);
 		m->wp = wp->id;
 		m->w = wp->window->id;
-	} else
-		m->wp = -1;
+	}
 
 	/* Stop dragging if needed. */
 	if (type != DRAG && type != WHEEL && c->tty.mouse_drag_flag != 0) {
@@ -1791,18 +1801,18 @@ out:
 
 /* Is this a bracket paste key? */
 static int
-server_client_is_bracket_pasting(struct client *c, key_code key)
+server_client_is_bracket_paste(struct client *c, key_code key)
 {
 	if (key == KEYC_PASTE_START) {
 		c->flags |= CLIENT_BRACKETPASTING;
 		log_debug("%s: bracket paste on", c->name);
-		return (1);
+		return (0);
 	}
 
 	if (key == KEYC_PASTE_END) {
-		c->flags &= ~CLIENT_BRACKETPASTING;
+ 		c->flags &= ~CLIENT_BRACKETPASTING;
 		log_debug("%s: bracket paste off", c->name);
-		return (1);
+		return (0);
 	}
 
 	return !!(c->flags & CLIENT_BRACKETPASTING);
@@ -1810,25 +1820,29 @@ server_client_is_bracket_pasting(struct client *c, key_code key)
 
 /* Is this fast enough to probably be a paste? */
 static int
-server_client_assume_paste(struct session *s)
+server_client_is_assume_paste(struct client *c)
 {
-	struct timeval	tv;
-	int		t;
+	struct session	*s = c->session;
+	struct timeval	 tv;
+	int		 t;
 
+	if (c->flags & CLIENT_BRACKETPASTING)
+		return (0);
 	if ((t = options_get_number(s->options, "assume-paste-time")) == 0)
 		return (0);
 
-	timersub(&s->activity_time, &s->last_activity_time, &tv);
+	timersub(&c->activity_time, &c->last_activity_time, &tv);
 	if (tv.tv_sec == 0 && tv.tv_usec < t * 1000) {
-		log_debug("session %s pasting (flag %d)", s->name,
-		    !!(s->flags & SESSION_PASTING));
-		if (s->flags & SESSION_PASTING)
+		if (c->flags & CLIENT_ASSUMEPASTING)
 			return (1);
-		s->flags |= SESSION_PASTING;
+		c->flags |= CLIENT_ASSUMEPASTING;
+		log_debug("%s: assume paste on", c->name);
 		return (0);
 	}
-	log_debug("session %s not pasting", s->name);
-	s->flags &= ~SESSION_PASTING;
+	if (c->flags & CLIENT_ASSUMEPASTING) {
+		c->flags &= ~CLIENT_ASSUMEPASTING;
+		log_debug("%s: assume paste off", c->name);
+	}
 	return (0);
 }
 
@@ -1852,6 +1866,26 @@ server_client_update_latest(struct client *c)
 	notify_client("client-active", c);
 }
 
+/* Get repeat time. */
+static u_int
+server_client_repeat_time(struct client *c, struct key_binding *bd)
+{
+	struct session	*s = c->session;
+	u_int		 repeat, initial;
+
+	if (~bd->flags & KEY_BINDING_REPEAT)
+		return (0);
+	repeat = options_get_number(s->options, "repeat-time");
+	if (repeat == 0)
+		return (0);
+	if ((~c->flags & CLIENT_REPEAT) || bd->key != c->last_key) {
+		initial = options_get_number(s->options, "initial-repeat-time");
+		if (initial != 0)
+			repeat = initial;
+	}
+	return (repeat);
+}
+
 /*
  * Handle data key input from client. This owns and can modify the key event it
  * is given and is responsible for freeing it.
@@ -1870,7 +1904,8 @@ server_client_key_callback(struct cmdq_item *item, void *data)
 	struct timeval			 tv;
 	struct key_table		*table, *first;
 	struct key_binding		*bd;
-	int				 xtimeout, flags;
+	u_int				 repeat;
+	uint64_t			 flags, prefix_delay;
 	struct cmd_find_state		 fs;
 	key_code			 key0, prefix, prefix2;
 
@@ -1880,6 +1915,8 @@ server_client_key_callback(struct cmdq_item *item, void *data)
 	wl = s->curw;
 
 	/* Update the activity timer. */
+	memcpy(&c->last_activity_time, &c->activity_time,
+	    sizeof c->last_activity_time);
 	if (gettimeofday(&c->activity_time, NULL) != 0)
 		fatal("gettimeofday failed");
 	session_update_activity(s, &c->activity_time);
@@ -1917,14 +1954,16 @@ server_client_key_callback(struct cmdq_item *item, void *data)
 		goto forward_key;
 
 	/* Forward if bracket pasting. */
-	if (server_client_is_bracket_pasting(c, key))
-		goto forward_key;
+	if (server_client_is_bracket_paste (c, key))
+		goto paste_key;
 
 	/* Treat everything as a regular key when pasting is detected. */
 	if (!KEYC_IS_MOUSE(key) &&
+	    key != KEYC_FOCUS_IN &&
+	    key != KEYC_FOCUS_OUT &&
 	    (~key & KEYC_SENT) &&
-	    server_client_assume_paste(s))
-		goto forward_key;
+	    server_client_is_assume_paste(c))
+		goto paste_key;
 
 	/*
 	 * Work out the current key table. If the pane is in a mode, use
@@ -1965,8 +2004,34 @@ try_again:
 	if (c->flags & CLIENT_REPEAT)
 		log_debug("currently repeating");
 
-	/* Try to see if there is a key binding in the current table. */
 	bd = key_bindings_get(table, key0);
+
+	/*
+	 * If prefix-timeout is enabled and we're in the prefix table, see if
+	 * the timeout has been exceeded. Revert to the root table if so.
+	 */
+	prefix_delay = options_get_number(global_options, "prefix-timeout");
+	if (prefix_delay > 0 &&
+	    strcmp(table->name, "prefix") == 0 &&
+	    server_client_key_table_activity_diff(c) > prefix_delay) {
+		/*
+		 * If repeating is active and this is a repeating binding,
+		 * ignore the timeout.
+		 */
+		if (bd != NULL &&
+		    (c->flags & CLIENT_REPEAT) &&
+		    (bd->flags & KEY_BINDING_REPEAT)) {
+			log_debug("prefix timeout ignored, repeat is active");
+		} else {
+			log_debug("prefix timeout exceeded");
+			server_client_set_key_table(c, NULL);
+			first = table = c->keytable;
+			server_status_client(c);
+			goto table_changed;
+		}
+	}
+
+	/* Try to see if there is a key binding in the current table. */
 	if (bd != NULL) {
 		/*
 		 * Key was matched in this table. If currently repeating but a
@@ -1995,12 +2060,13 @@ try_again:
 		 * If this is a repeating key, start the timer. Otherwise reset
 		 * the client back to the root table.
 		 */
-		xtimeout = options_get_number(s->options, "repeat-time");
-		if (xtimeout != 0 && (bd->flags & KEY_BINDING_REPEAT)) {
+		repeat = server_client_repeat_time(c, bd);
+		if (repeat != 0) {
 			c->flags |= CLIENT_REPEAT;
+			c->last_key = bd->key;
 
-			tv.tv_sec = xtimeout / 1000;
-			tv.tv_usec = (xtimeout % 1000) * 1000L;
+			tv.tv_sec = repeat / 1000;
+			tv.tv_usec = (repeat % 1000) * 1000L;
 			evtimer_del(&c->repeat_timer);
 			evtimer_add(&c->repeat_timer, &tv);
 		} else {
@@ -2024,7 +2090,19 @@ try_again:
 	}
 
 	/*
-	 * No match in this table. If not in the root table or if repeating,
+	 * Binding movement keys is useless since we only turn them on when the
+	 * application requests, so don't let them exit the prefix table.
+	 */
+	if (key == KEYC_MOUSEMOVE_PANE ||
+	    key == KEYC_MOUSEMOVE_STATUS ||
+	    key == KEYC_MOUSEMOVE_STATUS_LEFT ||
+	    key == KEYC_MOUSEMOVE_STATUS_RIGHT ||
+	    key == KEYC_MOUSEMOVE_STATUS_DEFAULT ||
+	    key == KEYC_MOUSEMOVE_BORDER)
+		goto forward_key;
+
+	/*
+	 * No match in this table. If not in the root table or if repeating
 	 * switch the client back to the root table and try again.
 	 */
 	log_debug("not found in key table %s", table->name);
@@ -2055,10 +2133,20 @@ forward_key:
 		goto out;
 	if (wp != NULL)
 		window_pane_key(wp, c, s, wl, key, m);
+	goto out;
+
+paste_key:
+	if (c->flags & CLIENT_READONLY)
+		goto out;
+	if (event->buf != NULL)
+		window_pane_paste(wp, event->buf, event->len);
+	key = KEYC_NONE;
+	goto out;
 
 out:
 	if (s != NULL && key != KEYC_FOCUS_OUT)
 		server_client_update_latest(c);
+	free(event->buf);
 	free(event);
 	return (CMD_RETURN_NORMAL);
 }
@@ -2370,8 +2458,10 @@ server_client_reset_state(struct client *c)
 	if (c->overlay_draw != NULL) {
 		if (c->overlay_mode != NULL)
 			s = c->overlay_mode(c, c->overlay_data, &cx, &cy);
-	} else
+	} else if (c->prompt_string == NULL)
 		s = wp->screen;
+	else
+		s = c->status.active;
 	if (s != NULL)
 		mode = s->mode;
 	if (log_get_level() != 0) {
@@ -2385,7 +2475,7 @@ server_client_reset_state(struct client *c)
 
 	/* Move cursor to pane cursor and offset. */
 	if (c->prompt_string != NULL) {
-		n = options_get_number(c->session->options, "status-position");
+		n = options_get_number(oo, "status-position");
 		if (n == 0)
 			cy = 0;
 		else {
@@ -2396,7 +2486,6 @@ server_client_reset_state(struct client *c)
 				cy = tty->sy - n;
 		}
 		cx = c->prompt_cursor;
-		mode &= ~MODE_CURSOR;
 	} else if (c->overlay_draw == NULL) {
 		cursor = 0;
 		tty_window_offset(tty, &ox, &oy, &sx, &sy);
@@ -2472,11 +2561,13 @@ server_client_click_timer(__unused int fd, __unused short events, void *data)
 		 * Waiting for a third click that hasn't happened, so this must
 		 * have been a double click.
 		 */
-		event = xmalloc(sizeof *event);
+		event = xcalloc(1, sizeof *event);
 		event->key = KEYC_DOUBLECLICK;
 		memcpy(&event->m, &c->click_event, sizeof event->m);
-		if (!server_client_handle_key(c, event))
+		if (!server_client_handle_key(c, event)) {
+			free(event->buf);
 			free(event);
+		}
 	}
 	c->flags &= ~(CLIENT_DOUBLECLICK|CLIENT_TRIPLECLICK);
 }
@@ -2569,7 +2660,8 @@ server_client_check_redraw(struct client *c)
 	struct tty		*tty = &c->tty;
 	struct window		*w = c->session->curw->window;
 	struct window_pane	*wp;
-	int			 needed, flags, mode = tty->mode, new_flags = 0;
+	int			 needed, tty_flags, mode = tty->mode;
+	uint64_t		 client_flags = 0;
 	int			 redraw;
 	u_int			 bit = 0;
 	struct timeval		 tv = { .tv_usec = 1000 };
@@ -2603,7 +2695,7 @@ server_client_check_redraw(struct client *c)
 			}
 		}
 		if (needed)
-			new_flags |= CLIENT_REDRAWPANES;
+			client_flags |= CLIENT_REDRAWPANES;
 	}
 	if (needed && (left = EVBUFFER_LENGTH(tty->out)) != 0) {
 		log_debug("%s: redraw deferred (%zu left)", c->name, left);
@@ -2626,20 +2718,20 @@ server_client_check_redraw(struct client *c)
 					 * If more that 64 panes, give up and
 					 * just redraw the window.
 					 */
-					new_flags &= CLIENT_REDRAWPANES;
-					new_flags |= CLIENT_REDRAWWINDOW;
+					client_flags &= CLIENT_REDRAWPANES;
+					client_flags |= CLIENT_REDRAWWINDOW;
 					break;
 				}
 			}
 			if (c->redraw_panes != 0)
 				c->flags |= CLIENT_REDRAWPANES;
 		}
-		c->flags |= new_flags;
+		c->flags |= client_flags;
 		return;
 	} else if (needed)
 		log_debug("%s: redraw needed", c->name);
 
-	flags = tty->flags & (TTY_BLOCK|TTY_FREEZE|TTY_NOCURSOR);
+	tty_flags = tty->flags & (TTY_BLOCK|TTY_FREEZE|TTY_NOCURSOR);
 	tty->flags = (tty->flags & ~(TTY_BLOCK|TTY_FREEZE))|TTY_NOCURSOR;
 
 	if (~c->flags & CLIENT_REDRAWWINDOW) {
@@ -2671,9 +2763,10 @@ server_client_check_redraw(struct client *c)
 		screen_redraw_screen(c);
 	}
 
-	tty->flags = (tty->flags & ~TTY_NOCURSOR)|(flags & TTY_NOCURSOR);
+	tty->flags = (tty->flags & ~TTY_NOCURSOR)|(tty_flags & TTY_NOCURSOR);
 	tty_update_mode(tty, mode, NULL);
-	tty->flags = (tty->flags & ~(TTY_BLOCK|TTY_FREEZE|TTY_NOCURSOR))|flags;
+	tty->flags = (tty->flags & ~(TTY_BLOCK|TTY_FREEZE|TTY_NOCURSOR))|
+	    tty_flags;
 
 	c->flags &= ~(CLIENT_ALLREDRAWFLAGS|CLIENT_STATUSFORCE);
 

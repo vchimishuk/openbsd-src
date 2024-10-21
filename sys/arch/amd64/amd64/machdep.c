@@ -1,4 +1,4 @@
-/*	$OpenBSD: machdep.c,v 1.293 2024/04/29 00:29:48 jsg Exp $	*/
+/*	$OpenBSD: machdep.c,v 1.297 2024/09/21 19:06:07 deraadt Exp $	*/
 /*	$NetBSD: machdep.c,v 1.3 2003/05/07 22:58:18 fvdl Exp $	*/
 
 /*-
@@ -116,6 +116,7 @@ extern int db_console;
 
 #include "acpi.h"
 #if NACPI > 0
+#include <dev/acpi/acpireg.h>
 #include <dev/acpi/acpivar.h>
 #endif
 
@@ -162,6 +163,7 @@ char machine[] = MACHINE;
  */
 void cpu_idle_cycle_hlt(void);
 void (*cpu_idle_cycle_fcn)(void) = &cpu_idle_cycle_hlt;
+void (*cpu_suspend_cycle_fcn)(void);
 
 /* the following is used externally for concurrent handlers */
 int setperf_prio = 0;
@@ -486,7 +488,7 @@ extern int amd64_has_xcrypt;
 extern int need_retpoline;
 
 const struct sysctl_bounded_args cpuctl_vars[] = {
-	{ CPU_LIDACTION, &lid_action, 0, 2 },
+	{ CPU_LIDACTION, &lid_action, -1, 2 },
 	{ CPU_PWRACTION, &pwr_action, 0, 2 },
 	{ CPU_CPUID, &cpu_id, SYSCTL_INT_READONLY },
 	{ CPU_CPUFEATURE, &cpu_feature, SYSCTL_INT_READONLY },
@@ -880,6 +882,11 @@ struct pcb dumppcb;
 __dead void
 boot(int howto)
 {
+#if NACPI > 0
+	if ((howto & RB_POWERDOWN) != 0 && acpi_softc)
+		acpi_softc->sc_state = ACPI_STATE_S5;
+#endif
+
 	if ((howto & RB_POWERDOWN) != 0)
 		lid_action = 0;
 
@@ -1293,7 +1300,8 @@ set_sys_segment(struct sys_segment_descriptor *sd, void *base, size_t limit,
 	sd->sd_hibase = (u_int64_t)base >> 24;
 }
 
-void cpu_init_idt(void)
+void
+cpu_init_idt(void)
 {
 	struct region_descriptor region;
 

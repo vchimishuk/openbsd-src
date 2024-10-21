@@ -1,8 +1,5 @@
-./usr/bin/addr2line
 ./usr/bin/as
 ./usr/bin/gdb
-./usr/bin/readelf
-./usr/include/ieeefp.h
 ./usr/include/landisk
 ./usr/include/landisk/_float.h
 ./usr/include/landisk/_types.h
@@ -16,6 +13,7 @@
 ./usr/include/landisk/cputypes.h
 ./usr/include/landisk/db_machdep.h
 ./usr/include/landisk/disklabel.h
+./usr/include/landisk/elf.h
 ./usr/include/landisk/endian.h
 ./usr/include/landisk/exec.h
 ./usr/include/landisk/fenv.h
@@ -63,6 +61,7 @@
 ./usr/include/sh/db_machdep.h
 ./usr/include/sh/devreg.h
 ./usr/include/sh/disklabel.h
+./usr/include/sh/elf.h
 ./usr/include/sh/endian.h
 ./usr/include/sh/exec.h
 ./usr/include/sh/fenv.h
@@ -99,7 +98,6 @@
 ./usr/include/sh/ubcreg.h
 ./usr/include/sh/vmparam.h
 ./usr/include/unwind.h
-./usr/libdata/ldscripts
 ./usr/libdata/ldscripts/shelf_obsd.x
 ./usr/libdata/ldscripts/shelf_obsd.xbn
 ./usr/libdata/ldscripts/shelf_obsd.xc
@@ -134,7 +132,6 @@
 ./usr/libdata/ldscripts/shlelf_obsd.xz
 ./usr/share/info/annotate.info
 ./usr/share/info/as.info
-./usr/share/info/bfd.info
 ./usr/share/info/gdb.info
 ./usr/share/info/gdbint.info
 ./usr/share/info/ld.info

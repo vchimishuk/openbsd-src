@@ -2383,8 +2383,6 @@ static void amdgpu_drv_delayed_reset_work_handler(struct work_struct *work)
 	}
 }
 
-#ifdef notyet
-
 static int amdgpu_pmops_prepare(struct device *dev)
 {
 	struct drm_device *drm_dev = dev_get_drvdata(dev);
@@ -2477,6 +2475,8 @@ static int amdgpu_pmops_freeze(struct device *dev)
 	return 0;
 }
 
+#ifdef notyet
+
 static int amdgpu_pmops_thaw(struct device *dev)
 {
 	struct drm_device *drm_dev = dev_get_drvdata(dev);
@@ -2491,12 +2491,16 @@ static int amdgpu_pmops_poweroff(struct device *dev)
 	return amdgpu_device_suspend(drm_dev, true);
 }
 
+#endif
+
 static int amdgpu_pmops_restore(struct device *dev)
 {
 	struct drm_device *drm_dev = dev_get_drvdata(dev);
 
 	return amdgpu_device_resume(drm_dev, true);
 }
+
+#ifdef notyet
 
 static int amdgpu_runtime_idle_check_display(struct device *dev)
 {
@@ -3099,7 +3103,7 @@ amdgpu_attach(struct device *parent, struct device *self, void *aux)
 	if (PCI_MAPREG_TYPE(type) != PCI_MAPREG_TYPE_MEM ||
 	    pci_mapreg_info(pa->pa_pc, pa->pa_tag, AMDGPU_PCI_MEM,
 	    type, &adev->fb_aper_offset, &adev->fb_aper_size, NULL)) {
-		printf(": can't get frambuffer info\n");
+		printf(": can't get framebuffer info\n");
 		return;
 	}
 
@@ -3487,14 +3491,17 @@ amdgpu_init_backlight(struct amdgpu_device *adev)
 void
 amdgpu_attachhook(struct device *self)
 {
-	struct amdgpu_device	*adev = (struct amdgpu_device *)self;
-	struct drm_device	*dev = &adev->ddev;
+	struct amdgpu_device *adev = (struct amdgpu_device *)self;
+	struct drm_device *dev = &adev->ddev;
+	struct pci_dev *pdev = adev->pdev;
 	int r, acpi_status;
 	struct rasops_info *ri = &adev->ro;
 	struct drm_fb_helper *fb_helper;
 	struct drm_framebuffer *fb;
 	struct drm_gem_object *obj;
 	struct amdgpu_bo *rbo;
+
+	pci_set_drvdata(pdev, dev);
 
 	r = amdgpu_driver_load_kms(adev, adev->flags);
 	if (r)
@@ -3671,15 +3678,23 @@ amdgpu_activate(struct device *self, int act)
 	switch (act) {
 	case DVACT_QUIESCE:
 		rv = config_activate_children(self, act);
-		amdgpu_device_prepare(dev);
-		amdgpu_device_suspend(dev, true);
+		amdgpu_pmops_prepare(self);
+		if (acpi_softc && acpi_softc->sc_state == ACPI_STATE_S4)
+			amdgpu_pmops_freeze(self);
+		else
+			amdgpu_pmops_suspend(self);
 		break;
 	case DVACT_SUSPEND:
+		if (!acpi_softc || acpi_softc->sc_state != ACPI_STATE_S4)
+			amdgpu_pmops_suspend_noirq(self);
 		break;
 	case DVACT_RESUME:
 		break;
 	case DVACT_WAKEUP:
-		amdgpu_device_resume(dev, true);
+		if (acpi_softc && acpi_softc->sc_state == ACPI_STATE_S4)
+			amdgpu_pmops_restore(self);
+		else
+			amdgpu_pmops_resume(self);
 		rv = config_activate_children(self, act);
 		break;
 	}

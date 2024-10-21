@@ -1,8 +1,5 @@
-./usr/bin/addr2line
 ./usr/bin/as
 ./usr/bin/gdb
-./usr/bin/readelf
-./usr/include/ieeefp.h
 ./usr/include/mips64
 ./usr/include/mips64/_float.h
 ./usr/include/mips64/_types.h
@@ -15,6 +12,7 @@
 ./usr/include/mips64/cpu.h
 ./usr/include/mips64/cpustate.h
 ./usr/include/mips64/db_machdep.h
+./usr/include/mips64/elf.h
 ./usr/include/mips64/endian.h
 ./usr/include/mips64/exec.h
 ./usr/include/mips64/fenv.h
@@ -63,6 +61,7 @@
 ./usr/include/octeon/cpustate.h
 ./usr/include/octeon/db_machdep.h
 ./usr/include/octeon/disklabel.h
+./usr/include/octeon/elf.h
 ./usr/include/octeon/endian.h
 ./usr/include/octeon/exec.h
 ./usr/include/octeon/fdt.h
@@ -105,7 +104,6 @@
 ./usr/include/octeon/timetc.h
 ./usr/include/octeon/trap.h
 ./usr/include/octeon/vmparam.h
-./usr/libdata/ldscripts
 ./usr/libdata/ldscripts/elf32btsmip.x
 ./usr/libdata/ldscripts/elf32btsmip.xbn
 ./usr/libdata/ldscripts/elf32btsmip.xc
@@ -204,7 +202,6 @@
 ./usr/libdata/ldscripts/elf64ltsmip.xz
 ./usr/share/info/annotate.info
 ./usr/share/info/as.info
-./usr/share/info/bfd.info
 ./usr/share/info/gdb.info
 ./usr/share/info/gdbint.info
 ./usr/share/info/ld.info

@@ -1,4 +1,4 @@
-/*	$OpenBSD: b.c,v 1.52 2024/05/04 22:59:21 millert Exp $	*/
+/*	$OpenBSD: b.c,v 1.54 2024/08/03 21:12:16 millert Exp $	*/
 /****************************************************************
 Copyright (C) Lucent Technologies 1997
 All Rights Reserved
@@ -81,9 +81,6 @@ int	patlen;
 fa	*fatab[NFA];
 int	nfatab	= 0;	/* entries in fatab */
 
-extern int u8_nextlen(const char *s);
-
-
 /* utf-8 mechanism:
 
    For most of Awk, utf-8 strings just "work", since they look like
@@ -117,7 +114,6 @@ static int entry_cmp(const void *l, const void *r);
 static int get_gototab(fa*, int, int);
 static int set_gototab(fa*, int, int, int);
 static void clear_gototab(fa*, int);
-extern int u8_rune(int *, const char *);
 
 static int *
 intalloc(size_t n, const char *f)
@@ -347,7 +343,8 @@ void freetr(Node *p)	/* free parse tree */
 /* in the parsing of regular expressions, metacharacters like . have */
 /* to be seen literally;  \056 is not a metacharacter. */
 
-int hexstr(const uschar **pp, int max)	/* find and eval hex string at pp, return new p */
+static int
+hexstr(const uschar **pp, int max)	/* find and eval hex string at pp, return new p */
 {			/* only pick up one 8-bit byte (2 chars) */
 	const uschar *p;
 	int n = 0;
@@ -375,36 +372,49 @@ int quoted(const uschar **pp)	/* pick up next thing after a \\ */
 
 /* BUG: should advance by utf-8 char even if makes no sense */
 
-	if ((c = *p++) == 't') {
+	switch ((c = *p++)) {
+	case 't':
 		c = '\t';
-	} else if (c == 'n') {
+		break;
+	case 'n':
 		c = '\n';
-	} else if (c == 'f') {
+		break;
+	case 'f':
 		c = '\f';
-	} else if (c == 'r') {
+		break;
+	case 'r':
 		c = '\r';
-	} else if (c == 'b') {
+		break;
+	case 'b':
 		c = '\b';
-	} else if (c == 'v') {
+		break;
+	case 'v':
 		c = '\v';
-	} else if (c == 'a') {
+		break;
+	case 'a':
 		c = '\a';
-	} else if (c == '\\') {
+		break;
+	case '\\':
 		c = '\\';
-	} else if (c == 'x') {	/* 2 hex digits follow */
-		c = hexstr(&p, 2);	/* this adds a null if number is invalid */
-	} else if (c == 'u') {	/* unicode char number up to 8 hex digits */
+		break;
+	case 'x': /* 2 hex digits follow */
+		c = hexstr(&p, 2); /* this adds a null if number is invalid */
+		break;
+	case 'u': /* unicode char number up to 8 hex digits */
 		c = hexstr(&p, 8);
-	} else if (isoctdigit(c)) {	/* \d \dd \ddd */
-		int n = c - '0';
-		if (isoctdigit(*p)) {
-			n = 8 * n + *p++ - '0';
-			if (isoctdigit(*p))
+		break;
+	default:
+		if (isoctdigit(c)) { /* \d \dd \ddd */
+			int n = c - '0';
+			if (isoctdigit(*p)) {
 				n = 8 * n + *p++ - '0';
+				if (isoctdigit(*p))
+					n = 8 * n + *p++ - '0';
+			}
+			c = n;
 		}
-		c = n;
-	} /* else */
-		/* c = c; */
+	}
+
 	*pp = p;
 	return c;
 }

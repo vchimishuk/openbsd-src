@@ -1,7 +1,7 @@
-#	$OpenBSD: Makefile,v 1.34 2023/04/28 12:26:43 krw Exp $
+#	$OpenBSD: Makefile,v 1.36 2024/10/15 00:08:28 deraadt Exp $
 
 FS=		install${OSrev}.img
-FSSIZE=		921600
+FSSIZE=		931840
 FSDISKTYPE=	install360
 CDROM=		install${OSrev}.iso
 
@@ -14,7 +14,7 @@ BSDRD=		${RELDIR}/bsd.rd
 BASE=		${RELDIR}/base${OSrev}.tgz ${RELDIR}/comp${OSrev}.tgz \
 		${RELDIR}/game${OSrev}.tgz ${RELDIR}/man${OSrev}.tgz \
 		${RELDIR}/bsd ${RELDIR}/bsd.rd ${RELDIR}/bsd.mp \
-		${RELDIR}/INSTALL.${MACHINE}
+		${RELDIR}/INSTALL.${MACHINE} ${RELDIR}/BUILDINFO
 XBASE=		${RELXDIR}/xbase${OSrev}.tgz ${RELXDIR}/xfont${OSrev}.tgz \
 		${RELXDIR}/xshare${OSrev}.tgz ${RELXDIR}/xserv${OSrev}.tgz
 

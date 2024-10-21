@@ -1,4 +1,4 @@
-/*	$OpenBSD: session.h,v 1.170 2024/05/18 11:17:30 jsg Exp $ */
+/*	$OpenBSD: session.h,v 1.174 2024/10/01 11:49:24 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -151,6 +151,7 @@ struct peer_stats {
 	time_t			 last_updown;
 	time_t			 last_read;
 	time_t			 last_write;
+	uint32_t		 msg_queue_len;
 	uint32_t		 prefix_cnt;
 	uint32_t		 prefix_out_cnt;
 	uint32_t		 pending_update;
@@ -160,6 +161,15 @@ struct peer_stats {
 	uint8_t			 last_rcvd_errcode;
 	uint8_t			 last_rcvd_suberr;
 	char			 last_reason[REASON_LEN];
+};
+
+struct auth_state {
+	struct bgpd_addr	local_addr;
+	struct bgpd_addr	remote_addr;
+	uint32_t		spi_in;
+	uint32_t		spi_out;
+	enum auth_method	method;
+	uint8_t			established;
 };
 
 enum Timer {
@@ -196,13 +206,8 @@ struct peer {
 		struct capabilities	peer;
 		struct capabilities	neg;
 	}			 capa;
-	struct {
-		struct bgpd_addr	local_addr;
-		uint32_t		spi_in;
-		uint32_t		spi_out;
-		enum auth_method	method;
-		uint8_t			established;
-	}			 auth;
+	struct auth_state	 auth_state;
+	struct auth_config	 auth_conf;
 	struct bgpd_addr	 local;
 	struct bgpd_addr	 local_alt;
 	struct bgpd_addr	 remote;
@@ -246,6 +251,7 @@ int	 carp_demote_set(char *, int);
 
 /* config.c */
 void	 merge_config(struct bgpd_config *, struct bgpd_config *);
+void	 free_deleted_peers(struct bgpd_config *);
 int	 prepare_listeners(struct bgpd_config *);
 
 /* control.c */
@@ -276,11 +282,14 @@ void	 mrt_done(struct mrt *);
 /* pfkey.c */
 struct sadb_msg;
 int	pfkey_read(int, struct sadb_msg *);
-int	pfkey_establish(struct peer *);
-int	pfkey_remove(struct peer *);
+int	pfkey_establish(struct auth_state *, struct auth_config *,
+	    const struct bgpd_addr *, const struct bgpd_addr *);
+int	pfkey_remove(struct auth_state *);
 int	pfkey_init(void);
-int	tcp_md5_check(int, struct peer *);
-int	tcp_md5_set(int, struct peer *);
+int	pfkey_send_conf(struct imsgbuf *, uint32_t, struct auth_config *);
+int	pfkey_recv_conf(struct peer *, struct imsg *);
+int	tcp_md5_check(int, struct auth_config *);
+int	tcp_md5_set(int, struct auth_config *, struct bgpd_addr *);
 int	tcp_md5_prep_listener(struct listen_addr *, struct peer_head *);
 void	tcp_md5_add_listener(struct bgpd_config *, struct peer *);
 void	tcp_md5_del_listener(struct bgpd_config *, struct peer *);
@@ -296,13 +305,14 @@ struct rtr_session;
 size_t			 rtr_count(void);
 void			 rtr_check_events(struct pollfd *, size_t);
 size_t			 rtr_poll_events(struct pollfd *, size_t, time_t *);
-struct rtr_session	*rtr_new(uint32_t, char *);
+struct rtr_session	*rtr_new(uint32_t, struct rtr_config_msg *);
 struct rtr_session	*rtr_get(uint32_t);
 void			 rtr_free(struct rtr_session *);
 void			 rtr_open(struct rtr_session *, int);
 void			 rtr_config_prep(void);
 void			 rtr_config_merge(void);
-void			 rtr_config_keep(struct rtr_session *);
+void			 rtr_config_keep(struct rtr_session *,
+			     struct rtr_config_msg *);
 void			 rtr_roa_merge(struct roa_tree *);
 void			 rtr_aspa_merge(struct aspa_tree *);
 void			 rtr_shutdown(void);
@@ -331,6 +341,7 @@ int		 imsg_ctl_parent(struct imsg *);
 int		 imsg_ctl_rde(struct imsg *);
 int		 imsg_ctl_rde_msg(int, uint32_t, pid_t);
 void		 session_stop(struct peer *, uint8_t, const char *);
+struct bgpd_addr *session_localaddr(struct peer *);
 
 /* timer.c */
 struct timer	*timer_get(struct timer_head *, enum Timer);

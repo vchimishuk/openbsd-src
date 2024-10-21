@@ -1,4 +1,4 @@
-/* $OpenBSD: log.c,v 1.61 2023/12/06 21:06:48 djm Exp $ */
+/* $OpenBSD: log.c,v 1.63 2024/10/14 01:57:50 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -406,19 +406,6 @@ sshlogdie(const char *file, const char *func, int line, int showfunc,
 }
 
 void
-sshsigdie(const char *file, const char *func, int line, int showfunc,
-    LogLevel level, const char *suffix, const char *fmt, ...)
-{
-	va_list args;
-
-	va_start(args, fmt);
-	sshlogv(file, func, line, showfunc, SYSLOG_LEVEL_FATAL,
-	    suffix, fmt, args);
-	va_end(args);
-	_exit(1);
-}
-
-void
 sshlogv(const char *file, const char *func, int line, int showfunc,
     LogLevel level, const char *suffix, const char *fmt, va_list args)
 {
@@ -431,9 +418,9 @@ sshlogv(const char *file, const char *func, int line, int showfunc,
 	if (nlog_verbose == 0 && level > log_level)
 		return;
 
-	snprintf(tag, sizeof(tag), "%.48s:%.48s():%d (pid=%ld)",
+	snprintf(tag, sizeof(tag), "%.48s:%.48s():%d (bin=%s, pid=%ld)",
 	    (cp = strrchr(file, '/')) == NULL ? file : cp + 1, func, line,
-	    (long)getpid());
+	    argv0 == NULL ? "UNKNOWN" : argv0, (long)getpid());
 	for (i = 0; i < nlog_verbose; i++) {
 		if (match_pattern_list(tag, log_verbose[i], 0) == 1) {
 			forced = 1;

@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.c,v 1.188 2024/05/14 01:42:07 guenther Exp $	*/
+/*	$OpenBSD: cpu.c,v 1.194 2024/10/06 16:24:02 semarie Exp $	*/
 /* $NetBSD: cpu.c,v 1.1 2003/04/26 18:39:26 fvdl Exp $ */
 
 /*-
@@ -157,6 +157,7 @@ int cpu_ebxfeature = 0;		/* cpuid(1).ebx */
 int cpu_ecxfeature = 0;		/* INTERSECTION(cpuid(1).ecx) */
 int cpu_feature = 0;		/* cpuid(1).edx */
 int ecpu_ecxfeature = 0;	/* cpuid(0x80000001).ecx */
+int cpu_sev_guestmode = 0;
 int cpu_meltdown = 0;
 int cpu_use_xsaves = 0;
 int need_retpoline = 1;		/* most systems need retpoline */
@@ -888,8 +889,10 @@ cpu_init(struct cpu_info *ci)
 void
 cpu_init_vmm(struct cpu_info *ci)
 {
+	uint64_t msr;
+
 	/*
-	 * Allocate a per-cpu VMXON region for VMX CPUs
+	 * Detect VMX specific features and initialize VMX-related state.
 	 */
 	if (ci->ci_vmm_flags & CI_VMM_VMX) {
 		ci->ci_vmxon_region = (struct vmxon_region *)malloc(PAGE_SIZE,
@@ -897,8 +900,17 @@ cpu_init_vmm(struct cpu_info *ci)
 		if (!pmap_extract(pmap_kernel(), (vaddr_t)ci->ci_vmxon_region,
 		    &ci->ci_vmxon_region_pa))
 			panic("Can't locate VMXON region in phys mem");
+
 		ci->ci_vmcs_pa = VMX_VMCS_PA_CLEAR;
 		rw_init(&ci->ci_vmcs_lock, "vmcslock");
+
+		if (rdmsr_safe(IA32_VMX_EPT_VPID_CAP, &msr) == 0 &&
+		    msr & IA32_EPT_VPID_CAP_INVEPT_CONTEXT)
+			ci->ci_vmm_cap.vcc_vmx.vmx_invept_mode =
+			    IA32_VMX_INVEPT_SINGLE_CTX;
+		else
+			ci->ci_vmm_cap.vcc_vmx.vmx_invept_mode =
+			    IA32_VMX_INVEPT_GLOBAL_CTX;
 	}
 }
 #endif /* NVMM > 0 */
@@ -1460,4 +1472,53 @@ wbinvd_on_all_cpus(void)
 	wbinvd();
 	return 0;
 }
+#endif
+
+int cpu_suspended;
+int cpu_wakeups;
+
+#ifdef SUSPEND
+
+void
+cpu_suspend_cycle(void)
+{
+	if (cpu_suspend_cycle_fcn)
+		cpu_suspend_cycle_fcn();
+	else
+		cpu_idle_cycle_fcn();
+}
+
+int
+cpu_suspend_primary(void)
+{
+	struct cpu_info *ci = curcpu();
+
+	/* Mask clock interrupts. */
+	local_pic.pic_hwmask(&local_pic, 0);
+
+	/*
+	 * All non-wakeup interrupts should be masked at this point;
+	 * re-enable interrupts such that wakeup interrupts actually
+	 * wake us up.  Set a flag such that drivers can tell we're
+	 * suspended and change their behaviour accordingly.  They can
+	 * wake us up by clearing the flag.
+	 */
+	cpu_suspended = 1;
+	ci->ci_ilevel = IPL_NONE;
+	intr_enable();
+
+	while (cpu_suspended) {
+		cpu_suspend_cycle();
+		cpu_wakeups++;
+	}
+
+	intr_disable();
+	ci->ci_ilevel = IPL_HIGH;
+
+	/* Unmask clock interrupts. */
+	local_pic.pic_hwunmask(&local_pic, 0);
+
+	return 0;
+}
+
 #endif

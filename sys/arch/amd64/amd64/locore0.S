@@ -1,4 +1,4 @@
-/*	$OpenBSD: locore0.S,v 1.23 2024/05/12 16:49:38 guenther Exp $	*/
+/*	$OpenBSD: locore0.S,v 1.26 2024/10/04 21:15:52 bluhm Exp $	*/
 /*	$NetBSD: locore.S,v 1.13 2004/03/25 18:33:17 drochner Exp $	*/
 
 /*
@@ -269,6 +269,74 @@ cont:
 	orl	%edx, RELOC(cpu_feature)
 
 	/*
+	 * Determine AMD SEV capability.
+	 */
+	movl	$RELOC(cpu_vendor),%ebp
+	cmpl $0x68747541, (%ebp)	/* "Auth" */
+	jne	.Lno_sev
+	cmpl $0x69746e65, 4(%ebp)	/* "enti" */
+	jne	.Lno_sev
+	cmpl $0x444d4163, 8(%ebp)	/* "cAMD" */
+	jne	.Lno_sev
+
+	/* AMD CPU, check for SEV. */
+	movl	$0x8000001f, %eax
+	cpuid
+	andl	$CPUIDEAX_SEV, %eax	/* SEV */
+	jz	.Lno_sev
+
+	/* Are we in guest mode with SEV enabled? */
+	movl	$MSR_SEV_STATUS, %ecx
+	rdmsr
+	andl	$SEV_STAT_ENABLED, %eax
+	jz	.Lno_sev
+
+	/* Determine C bit position */
+	movl	%ebx, %ecx	/* %ebx from previous cpuid */
+	andl	$0x3f, %ecx
+	cmpl	$0x20, %ecx	/* must be at least bit 32 (counting from 0) */
+	jl	.Lno_sev
+	xorl	%eax, %eax
+	movl	%eax, RELOC(pg_crypt)
+	subl	$0x20, %ecx
+	movl	$0x1, %eax
+	shll	%cl, %eax
+	movl	%eax, RELOC((pg_crypt + 4))
+
+	/*
+	 * Determine physical address reduction. Adjust page frame masks.
+	 *
+	 * The top 12 bits of a physical address are reserved and
+	 * supposed to be 0. Thus PG_FRAME masks of the top 12 bits
+	 * and low 10 bits (offset into page).  PG_LGFRAME is defined
+	 * similarly.
+	 *
+	 * According to the number of reduction bits we shrink the
+	 * page frame masks beginning at bit 51.
+	 *
+	 * E.g. with a 5 bit reduction PG_FRAME will be reduced from
+	 * 0x000ffffffffff000 to 0x00007ffffffff000.
+	 *
+	 * One of the now freed bits will be used as the C bit, e.g.
+	 * bit 51.
+	 */
+	movl	%ebx, %ecx			/* %ebx from previous cpuid */
+	andl	$0xfc0, %ecx
+	shrl	$6, %ecx			/* number of bits to reduce */
+
+	movl	$1, %eax			/* calculate mask */
+	shll	$20, %eax
+	shrl	%cl, %eax
+	decl	%eax
+
+	andl	%eax, RELOC(pg_frame + 4)	/* apply mask */
+	andl	%eax, RELOC(pg_lgframe + 4)
+
+	movl	$0x1, RELOC(cpu_sev_guestmode)	/* we are a SEV guest */
+
+.Lno_sev:
+
+	/*
 	 * Finished with old stack; load new %esp now instead of later so we
 	 * can trace this code without having to worry about the trace trap
 	 * clobbering the memory test or the zeroing of the bss+bootstrap page
@@ -314,17 +382,21 @@ cont:
 	NDML3_ENTRIES + NDML2_ENTRIES + 3) * NBPG)
 
 #define fillkpt \
-1:	movl	%eax,(%ebx)	;	/* store phys addr */ \
-	movl	$0,4(%ebx)	;	/* upper 32 bits 0 */ \
-	addl	$8,%ebx		;	/* next pte/pde */ \
-	addl	$NBPG,%eax	;	/* next phys page */ \
-	loop	1b		;	/* till finished */
+	pushl	%ebp				;	/* save */ \
+	movl	RELOC((pg_crypt + 4)), %ebp	;	/* C bit? */ \
+1:	movl	%eax,(%ebx)			;	/* store phys addr */ \
+	movl	%ebp,4(%ebx)			;	/* upper 32 bits */ \
+	addl	$8,%ebx				;	/* next pte/pde */ \
+	addl	$NBPG,%eax			;	/* next phys page */ \
+	loop	1b				;	/* till finished */ \
+	popl	%ebp				;	/* restore */
 
 
 #define fillkpt_nx \
 	pushl	%ebp				;	/* save */ \
-1:	movl	%eax,(%ebx)			;	/* store phys addr */ \
 	movl	RELOC((pg_nx + 4)), %ebp	;	/* NX bit? */ \
+	orl	RELOC((pg_crypt + 4)), %ebp	;	/* C bit? */ \
+1:	movl	%eax,(%ebx)			;	/* store phys addr */ \
 	movl	%ebp,4(%ebx)			;	/* upper 32 bits */ \
 	addl	$8,%ebx				;	/* next pte/pde */ \
 	addl	$NBPG,%eax			;	/* next phys page */ \
@@ -510,6 +582,7 @@ store_pte:
 	movl	%eax, (%ebx)
 	pushl	%ebp
 	movl	RELOC((pg_nx + 4)), %ebp
+	orl	RELOC((pg_crypt + 4)), %ebp
 	movl	%ebp, 4(%ebx)
 	popl	%ebp
 	addl	$8, %ebx
@@ -535,6 +608,7 @@ store_pte:
 	movl	%eax,(%ebx)
 	pushl	%ebp
 	movl	RELOC((pg_nx + 4)), %ebp
+	orl	RELOC((pg_crypt + 4)), %ebp
 	movl	%ebp, 4(%ebx)
 	popl	%ebp
 

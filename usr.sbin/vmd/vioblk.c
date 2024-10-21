@@ -1,4 +1,4 @@
-/*	$OpenBSD: vioblk.c,v 1.13 2024/02/20 21:40:37 dv Exp $	*/
+/*	$OpenBSD: vioblk.c,v 1.15 2024/09/26 01:45:13 jsg Exp $	*/
 
 /*
  * Copyright (c) 2023 Dave Voutila <dv@openbsd.org>
@@ -16,8 +16,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
-#include <sys/mman.h>
-#include <sys/param.h> /* PAGE_SIZE */
+#include <stdint.h>
 
 #include <dev/pci/virtio_pcireg.h>
 #include <dev/pv/vioblkreg.h>
@@ -25,7 +24,6 @@
 
 #include <errno.h>
 #include <event.h>
-#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -555,7 +553,7 @@ handle_sync_io(int fd, short event, void *arg)
 		case VIODEV_MSG_IO_WRITE:
 			/* Write IO: no reply needed */
 			if (handle_io_write(&msg, dev) == 1)
-				virtio_assert_pic_irq(dev, 0);
+				virtio_assert_irq(dev, 0);
 			break;
 		case VIODEV_MSG_SHUTDOWN:
 			event_del(&dev->sync_iev.ev);
@@ -614,7 +612,7 @@ handle_io_write(struct viodev_msg *msg, struct virtio_dev *dev)
 			vioblk->cfg.isr_status = 0;
 			vioblk->vq[0].last_avail = 0;
 			vioblk->vq[0].notified_avail = 0;
-			virtio_deassert_pic_irq(dev, msg->vcpu);
+			virtio_deassert_irq(dev, msg->vcpu);
 		}
 		break;
 	default:

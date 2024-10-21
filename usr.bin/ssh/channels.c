@@ -1,4 +1,4 @@
-/* $OpenBSD: channels.c,v 1.438 2024/05/17 00:30:23 djm Exp $ */
+/* $OpenBSD: channels.c,v 1.440 2024/10/13 22:20:06 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -1004,14 +1004,16 @@ channel_format_status(const Channel *c)
 {
 	char *ret = NULL;
 
-	xasprintf(&ret, "t%d [%s] %s%u i%u/%zu o%u/%zu e[%s]/%zu "
-	    "fd %d/%d/%d sock %d cc %d io 0x%02x/0x%02x",
+	xasprintf(&ret, "t%d [%s] %s%u %s%u i%u/%zu o%u/%zu e[%s]/%zu "
+	    "fd %d/%d/%d sock %d cc %d %s%u io 0x%02x/0x%02x",
 	    c->type, c->xctype != NULL ? c->xctype : c->ctype,
 	    c->have_remote_id ? "r" : "nr", c->remote_id,
+	    c->mux_ctx != NULL ? "m" : "nm", c->mux_downstream_id,
 	    c->istate, sshbuf_len(c->input),
 	    c->ostate, sshbuf_len(c->output),
 	    channel_format_extended_usage(c), sshbuf_len(c->extended),
 	    c->rfd, c->wfd, c->efd, c->sock, c->ctl_chan,
+	    c->have_ctl_child_id ? "c" : "nc", c->ctl_child_id,
 	    c->io_want, c->io_ready);
 	return ret;
 }
@@ -5216,4 +5218,23 @@ x11_request_forwarding_with_spoofing(struct ssh *ssh, int client_session_id,
 	    (r = ssh_packet_write_wait(ssh)) != 0)
 		fatal_fr(r, "send x11-req");
 	free(new_data);
+}
+
+/*
+ * Returns whether an x11 channel was used recently (less than a second ago)
+ */
+int
+x11_channel_used_recently(struct ssh *ssh) {
+	u_int i;
+	Channel *c;
+	time_t lastused = 0;
+
+	for (i = 0; i < ssh->chanctxt->channels_alloc; i++) {
+		c = ssh->chanctxt->channels[i];
+		if (c == NULL || c->ctype == NULL || c->lastused == 0 ||
+		    strcmp(c->ctype, "x11-connection") != 0)
+			continue;
+		lastused = c->lastused;
+	}
+	return lastused != 0 && monotime() > lastused + 1;
 }

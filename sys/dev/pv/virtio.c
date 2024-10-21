@@ -1,4 +1,4 @@
-/*	$OpenBSD: virtio.c,v 1.25 2024/05/24 10:05:55 jsg Exp $	*/
+/*	$OpenBSD: virtio.c,v 1.32 2024/09/02 08:26:26 sf Exp $	*/
 /*	$NetBSD: virtio.c,v 1.3 2011/11/02 23:05:52 njoly Exp $	*/
 
 /*
@@ -81,10 +81,19 @@ virtio_device_string(int id)
 #if VIRTIO_DEBUG
 static const struct virtio_feature_name transport_feature_names[] = {
 	{ VIRTIO_F_NOTIFY_ON_EMPTY,	"NotifyOnEmpty"},
+	{ VIRTIO_F_ANY_LAYOUT,		"AnyLayout"},
 	{ VIRTIO_F_RING_INDIRECT_DESC,	"RingIndirectDesc"},
 	{ VIRTIO_F_RING_EVENT_IDX,	"RingEventIdx"},
 	{ VIRTIO_F_BAD_FEATURE,		"BadFeature"},
 	{ VIRTIO_F_VERSION_1,		"Version1"},
+	{ VIRTIO_F_ACCESS_PLATFORM,	"AccessPlatf"},
+	{ VIRTIO_F_RING_PACKED,		"RingPacked"},
+	{ VIRTIO_F_IN_ORDER,		"InOrder"},
+	{ VIRTIO_F_ORDER_PLATFORM,	"OrderPlatf"},
+	{ VIRTIO_F_SR_IOV,		"SrIov"},
+	{ VIRTIO_F_NOTIFICATION_DATA,	"NotifData"},
+	{ VIRTIO_F_NOTIF_CONFIG_DATA,	"NotifConfData"},
+	{ VIRTIO_F_RING_RESET,		"RingReset"},
 	{ 0,				NULL}
 };
 
@@ -166,6 +175,7 @@ virtio_reinit_start(struct virtio_softc *sc)
 		virtio_init_vq(sc, vq);
 		virtio_setup_queue(sc, vq, vq->vq_dmamap->dm_segs[0].ds_addr);
 	}
+	sc->sc_ops->setup_intrs(sc);
 }
 
 void
@@ -176,6 +186,9 @@ virtio_reinit_end(struct virtio_softc *sc)
 
 /*
  * dmamap sync operations for a virtqueue.
+ *
+ * XXX These should be more fine grained. Syncing the whole ring if we
+ * XXX only need a few bytes is inefficient if we use bounce buffers.
  */
 static inline void
 vq_sync_descs(struct virtio_softc *sc, struct virtqueue *vq, int ops)
@@ -194,12 +207,31 @@ vq_sync_aring(struct virtio_softc *sc, struct virtqueue *vq, int ops)
 }
 
 static inline void
+vq_sync_aring_used_event(struct virtio_softc *sc, struct virtqueue *vq, int ops)
+{
+	bus_dmamap_sync(sc->sc_dmat, vq->vq_dmamap, vq->vq_availoffset +
+	    offsetof(struct vring_avail, ring) + vq->vq_num * sizeof(uint16_t),
+	    sizeof(uint16_t), ops);
+}
+
+
+static inline void
 vq_sync_uring(struct virtio_softc *sc, struct virtqueue *vq, int ops)
 {
 	bus_dmamap_sync(sc->sc_dmat, vq->vq_dmamap, vq->vq_usedoffset,
 	    offsetof(struct vring_used, ring) + vq->vq_num *
 	    sizeof(struct vring_used_elem), ops);
 }
+
+static inline void
+vq_sync_uring_avail_event(struct virtio_softc *sc, struct virtqueue *vq, int ops)
+{
+	bus_dmamap_sync(sc->sc_dmat, vq->vq_dmamap,
+	    vq->vq_usedoffset + offsetof(struct vring_used, ring) +
+	    vq->vq_num * sizeof(struct vring_used_elem), sizeof(uint16_t),
+	    ops);
+}
+
 
 static inline void
 vq_sync_indirect(struct virtio_softc *sc, struct virtqueue *vq, int slot,
@@ -280,10 +312,11 @@ virtio_init_vq(struct virtio_softc *sc, struct virtqueue *vq)
 		vq->vq_entries[i].qe_index = i;
 	}
 
+	bus_dmamap_sync(sc->sc_dmat, vq->vq_dmamap, 0, vq->vq_bytesize,
+	    BUS_DMASYNC_PREWRITE);
 	/* enqueue/dequeue status */
 	vq->vq_avail_idx = 0;
 	vq->vq_used_idx = 0;
-	vq_sync_aring(sc, vq, BUS_DMASYNC_PREWRITE);
 	vq_sync_uring(sc, vq, BUS_DMASYNC_PREREAD);
 	vq->vq_queued = 1;
 }
@@ -297,7 +330,7 @@ virtio_init_vq(struct virtio_softc *sc, struct virtqueue *vq)
  */
 int
 virtio_alloc_vq(struct virtio_softc *sc, struct virtqueue *vq, int index,
-    int maxsegsize, int maxnsegs, const char *name)
+    int maxnsegs, const char *name)
 {
 	int vq_size, allocsize1, allocsize2, allocsize3, allocsize = 0;
 	int rsegs, r, hdrlen;
@@ -663,11 +696,13 @@ virtio_enqueue_p(struct virtqueue *vq, int slot, bus_dmamap_t dmamap,
 static void
 publish_avail_idx(struct virtio_softc *sc, struct virtqueue *vq)
 {
+	/* first make sure the avail ring entries are visible to the device */
 	vq_sync_aring(sc, vq, BUS_DMASYNC_PREWRITE);
 
 	virtio_membar_producer();
 	vq->vq_avail->idx = vq->vq_avail_idx;
-	vq_sync_aring(sc, vq, BUS_DMASYNC_POSTWRITE);
+	/* make the avail idx visible to the device */
+	vq_sync_aring(sc, vq, BUS_DMASYNC_PREWRITE);
 	vq->vq_queued = 1;
 }
 
@@ -697,6 +732,7 @@ notify:
 			publish_avail_idx(sc, vq);
 
 			virtio_membar_sync();
+			vq_sync_uring_avail_event(sc, vq, BUS_DMASYNC_POSTREAD);
 			t = VQ_AVAIL_EVENT(vq) + 1;
 			if ((uint16_t)(n - t) < (uint16_t)(n - o))
 				sc->sc_ops->kick(sc, vq->vq_index);
@@ -704,6 +740,7 @@ notify:
 			publish_avail_idx(sc, vq);
 
 			virtio_membar_sync();
+			vq_sync_uring(sc, vq, BUS_DMASYNC_POSTREAD);
 			if (!(vq->vq_used->flags & VRING_USED_F_NO_NOTIFY))
 				sc->sc_ops->kick(sc, vq->vq_index);
 		}
@@ -772,8 +809,10 @@ virtio_enqueue_trim(struct virtqueue *vq, int slot, int nsegs)
  * Dequeue a request.
  */
 /*
- * dequeue: dequeue a request from uring; dmamap_sync for uring is
- *	    already done in the interrupt handler.
+ * dequeue: dequeue a request from uring; bus_dmamap_sync for uring must
+ * 	    already have been done, usually by virtio_check_vq()
+ * 	    in the interrupt handler. This means that polling virtio_dequeue()
+ * 	    repeatedly until it returns 0 does not work.
  */
 int
 virtio_dequeue(struct virtio_softc *sc, struct virtqueue *vq,
@@ -788,6 +827,7 @@ virtio_dequeue(struct virtio_softc *sc, struct virtqueue *vq,
 	usedidx &= vq->vq_mask;
 
 	virtio_membar_consumer();
+	vq_sync_uring(sc, vq, BUS_DMASYNC_POSTREAD);
 	slot = vq->vq_used->ring[usedidx].id;
 	qe = &vq->vq_entries[slot];
 
@@ -807,7 +847,7 @@ virtio_dequeue(struct virtio_softc *sc, struct virtqueue *vq,
  *                 if you forget to call this the slot will be leaked.
  *
  *                 Don't call this if you use statically allocated slots
- *                 and virtio_dequeue_trim().
+ *                 and virtio_enqueue_trim().
  */
 int
 virtio_dequeue_commit(struct virtqueue *vq, int slot)
@@ -843,7 +883,7 @@ virtio_postpone_intr(struct virtqueue *vq, uint16_t nslots)
 	VQ_USED_EVENT(vq) = idx;
 	virtio_membar_sync();
 
-	vq_sync_aring(vq->vq_owner, vq, BUS_DMASYNC_PREWRITE);
+	vq_sync_aring_used_event(vq->vq_owner, vq, BUS_DMASYNC_PREWRITE);
 	vq->vq_queued++;
 
 	if (nslots < virtio_nused(vq))
@@ -896,6 +936,7 @@ virtio_stop_vq_intr(struct virtio_softc *sc, struct virtqueue *vq)
 		 * interrupt.
 		 */
 		VQ_USED_EVENT(vq) = vq->vq_used_idx + 0x8000;
+		vq_sync_aring_used_event(sc, vq, BUS_DMASYNC_PREWRITE);
 	} else {
 		vq->vq_avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
 	}
@@ -911,16 +952,19 @@ virtio_start_vq_intr(struct virtio_softc *sc, struct virtqueue *vq)
 	 * interrupts is done through setting the latest
 	 * consumed index in the used_event field
 	 */
-	if (virtio_has_feature(sc, VIRTIO_F_RING_EVENT_IDX))
+	if (virtio_has_feature(sc, VIRTIO_F_RING_EVENT_IDX)) {
 		VQ_USED_EVENT(vq) = vq->vq_used_idx;
-	else
+		vq_sync_aring_used_event(sc, vq, BUS_DMASYNC_PREWRITE);
+	} else {
 		vq->vq_avail->flags &= ~VRING_AVAIL_F_NO_INTERRUPT;
+		vq_sync_aring(sc, vq, BUS_DMASYNC_PREWRITE);
+	}
 
 	virtio_membar_sync();
 
-	vq_sync_aring(sc, vq, BUS_DMASYNC_PREWRITE);
 	vq->vq_queued++;
 
+	vq_sync_uring(sc, vq, BUS_DMASYNC_POSTREAD);
 	if (vq->vq_used_idx != vq->vq_used->idx)
 		return 1;
 
@@ -936,6 +980,7 @@ virtio_nused(struct virtqueue *vq)
 {
 	uint16_t	n;
 
+	vq_sync_uring(vq->vq_owner, vq, BUS_DMASYNC_POSTREAD);
 	n = (uint16_t)(vq->vq_used->idx - vq->vq_used_idx);
 	VIRTIO_ASSERT(n <= vq->vq_num);
 
@@ -946,21 +991,43 @@ virtio_nused(struct virtqueue *vq)
 void
 virtio_vq_dump(struct virtqueue *vq)
 {
+#if VIRTIO_DEBUG >= 2
+	int i;
+#endif
 	/* Common fields */
+	printf(" + addr: %p\n", vq);
 	printf(" + vq num: %d\n", vq->vq_num);
 	printf(" + vq mask: 0x%X\n", vq->vq_mask);
 	printf(" + vq index: %d\n", vq->vq_index);
 	printf(" + vq used idx: %d\n", vq->vq_used_idx);
 	printf(" + vq avail idx: %d\n", vq->vq_avail_idx);
 	printf(" + vq queued: %d\n",vq->vq_queued);
+#if VIRTIO_DEBUG >= 2
+	for (i = 0; i < vq->vq_num; i++) {
+		struct vring_desc *desc = &vq->vq_desc[i];
+		printf("  D%-3d len:%d flags:%d next:%d\n", i, desc->len,
+		    desc->flags, desc->next);
+	}
+#endif
 	/* Avail ring fields */
 	printf(" + avail flags: 0x%X\n", vq->vq_avail->flags);
 	printf(" + avail idx: %d\n", vq->vq_avail->idx);
 	printf(" + avail event: %d\n", VQ_AVAIL_EVENT(vq));
+#if VIRTIO_DEBUG >= 2
+	for (i = 0; i < vq->vq_num; i++)
+		printf("  A%-3d idx:%d\n", i, vq->vq_avail->ring[i]);
+#endif
 	/* Used ring fields */
 	printf(" + used flags: 0x%X\n",vq->vq_used->flags);
 	printf(" + used idx: %d\n",vq->vq_used->idx);
 	printf(" + used event: %d\n", VQ_USED_EVENT(vq));
+#if VIRTIO_DEBUG >= 2
+	for (i = 0; i < vq->vq_num; i++) {
+		printf("  U%-3d id:%d len:%d\n", i,
+				vq->vq_used->ring[i].id,
+				vq->vq_used->ring[i].len);
+	}
+#endif
 	printf(" +++++++++++++++++++++++++++\n");
 }
 #endif

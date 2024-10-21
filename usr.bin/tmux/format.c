@@ -1,4 +1,4 @@
-/* $OpenBSD: format.c,v 1.318 2023/09/08 06:52:31 nicm Exp $ */
+/* $OpenBSD: format.c,v 1.321 2024/10/10 10:41:33 nicm Exp $ */
 
 /*
  * Copyright (c) 2011 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -1136,8 +1136,7 @@ format_cb_mouse_word(struct format_tree *ft)
 		return (NULL);
 
 	if (!TAILQ_EMPTY(&wp->modes)) {
-		if (TAILQ_FIRST(&wp->modes)->mode == &window_copy_mode ||
-		    TAILQ_FIRST(&wp->modes)->mode == &window_view_mode)
+		if (window_pane_mode(wp) != WINDOW_PANE_NO_MODE)
 			return (window_copy_get_word(wp, x, y));
 		return (NULL);
 	}
@@ -1181,8 +1180,7 @@ format_cb_mouse_line(struct format_tree *ft)
 		return (NULL);
 
 	if (!TAILQ_EMPTY(&wp->modes)) {
-		if (TAILQ_FIRST(&wp->modes)->mode == &window_copy_mode ||
-		    TAILQ_FIRST(&wp->modes)->mode == &window_view_mode)
+		if (window_pane_mode(wp) != WINDOW_PANE_NO_MODE)
 			return (window_copy_get_line(wp, y));
 		return (NULL);
 	}
@@ -1962,6 +1960,23 @@ format_cb_pane_unseen_changes(struct format_tree *ft)
 	return (NULL);
 }
 
+/* Callback for pane_key_mode. */
+static void *
+format_cb_pane_key_mode(struct format_tree *ft)
+{
+	if (ft->wp != NULL && ft->wp->screen != NULL) {
+		switch (ft->wp->screen->mode & EXTENDED_KEY_MODES) {
+		case MODE_KEYS_EXTENDED:
+			return (xstrdup("Ext 1"));
+		case MODE_KEYS_EXTENDED_2:
+			return (xstrdup("Ext 2"));
+		default:
+			return (xstrdup("VT10x"));
+		}
+	}
+	return (NULL);
+}
+
 /* Callback for pane_last. */
 static void *
 format_cb_pane_last(struct format_tree *ft)
@@ -2303,6 +2318,13 @@ static void *
 format_cb_version(__unused struct format_tree *ft)
 {
 	return (xstrdup(getversion()));
+}
+
+/* Callback for sixel_support. */
+static void *
+format_cb_sixel_support(__unused struct format_tree *ft)
+{
+	return (xstrdup("0"));
 }
 
 /* Callback for active_window_index. */
@@ -2997,6 +3019,9 @@ static const struct format_table_entry format_table[] = {
 	{ "pane_input_off", FORMAT_TABLE_STRING,
 	  format_cb_pane_input_off
 	},
+	{ "pane_key_mode", FORMAT_TABLE_STRING,
+	  format_cb_pane_key_mode
+	},
 	{ "pane_last", FORMAT_TABLE_STRING,
 	  format_cb_pane_last
 	},
@@ -3128,6 +3153,9 @@ static const struct format_table_entry format_table[] = {
 	},
 	{ "session_windows", FORMAT_TABLE_STRING,
 	  format_cb_session_windows
+	},
+	{ "sixel_support", FORMAT_TABLE_STRING,
+	  format_cb_sixel_support
 	},
 	{ "socket_path", FORMAT_TABLE_STRING,
 	  format_cb_socket_path

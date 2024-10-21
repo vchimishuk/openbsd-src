@@ -1,4 +1,4 @@
-/*	$OpenBSD: intr.c,v 1.57 2024/05/26 13:37:31 kettenis Exp $	*/
+/*	$OpenBSD: intr.c,v 1.61 2024/06/25 12:02:48 kettenis Exp $	*/
 /*	$NetBSD: intr.c,v 1.3 2003/03/03 22:16:20 fvdl Exp $	*/
 
 /*
@@ -72,6 +72,9 @@ struct pic softintr_pic = {
 	NULL,
 	NULL,
 };
+
+int intr_suspended;
+struct intrhand *intr_nowake;
 
 /*
  * Fill in default interrupt table (in case of spurious interrupt
@@ -529,7 +532,18 @@ intr_handler(struct intrframe *frame, struct intrhand *ih)
 	int rc;
 #ifdef MULTIPROCESSOR
 	int need_lock;
+#endif
 
+	/*
+	 * We may not be able to mask MSIs, so block non-wakeup
+	 * interrupts while we're suspended.
+	 */
+	if (intr_suspended && (ih->ih_flags & IPL_WAKEUP) == 0) {
+		intr_nowake = ih;
+		return 0;
+	}
+
+#ifdef MULTIPROCESSOR
 	if (ih->ih_flags & IPL_MPSAFE)
 		need_lock = 0;
 	else
@@ -548,8 +562,6 @@ intr_handler(struct intrframe *frame, struct intrhand *ih)
 #endif
 	return rc;
 }
-
-#define CONCAT(x,y)	__CONCAT(x,y)
 
 /*
  * Fake interrupt handler structures for the benefit of symmetry with
@@ -715,6 +727,8 @@ intr_enable_wakeup(void)
 		if (pic->pic_hwmask)
 			pic->pic_hwmask(pic, pin);
 	}
+
+	intr_suspended = 1;
 }
 
 void
@@ -723,6 +737,8 @@ intr_disable_wakeup(void)
 	struct cpu_info *ci = curcpu();
 	struct pic *pic;
 	int irq, pin;
+
+	intr_suspended = 0;
 
 	for (irq = 0; irq < MAX_INTR_SOURCES; irq++) {
 		if (ci->ci_isources[irq] == NULL)
@@ -735,6 +751,13 @@ intr_disable_wakeup(void)
 		pin = ci->ci_isources[irq]->is_pin;
 		if (pic->pic_hwunmask)
 			pic->pic_hwunmask(pic, pin);
+	}
+
+	if (intr_nowake) {
+		printf("last non-wakeup interrupt: irq%d/%s\n",
+		    *(int *)intr_nowake->ih_count.ec_data,
+		    intr_nowake->ih_count.ec_name);
+		intr_nowake = NULL;
 	}
 }
 

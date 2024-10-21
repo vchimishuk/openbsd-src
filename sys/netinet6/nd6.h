@@ -1,4 +1,4 @@
-/*	$OpenBSD: nd6.h,v 1.99 2023/05/04 06:56:56 bluhm Exp $	*/
+/*	$OpenBSD: nd6.h,v 1.101 2024/10/17 05:37:54 jsg Exp $	*/
 /*	$KAME: nd6.h,v 1.95 2002/06/08 11:31:06 itojun Exp $	*/
 
 /*
@@ -32,8 +32,6 @@
 
 #ifndef _NETINET6_ND6_H_
 #define _NETINET6_ND6_H_
-
-#include <sys/task.h>
 
 #define ND6_LLINFO_PURGE	-3
 #define ND6_LLINFO_NOSTATE	-2
@@ -134,7 +132,7 @@ void nd6_nud_hint(struct rtentry *);
 void nd6_rtrequest(struct ifnet *, int, struct rtentry *);
 int nd6_ioctl(u_long, caddr_t, struct ifnet *);
 void nd6_cache_lladdr(struct ifnet *, const struct in6_addr *, char *,
-    int, int, int);
+    int, int, int, int);
 int nd6_resolve(struct ifnet *, struct rtentry *, struct mbuf *,
 	 struct sockaddr *, u_char *);
 int nd6_need_cache(struct ifnet *);

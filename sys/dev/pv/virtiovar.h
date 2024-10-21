@@ -1,4 +1,4 @@
-/*	$OpenBSD: virtiovar.h,v 1.18 2024/05/17 16:37:10 sf Exp $	*/
+/*	$OpenBSD: virtiovar.h,v 1.22 2024/09/02 08:26:26 sf Exp $	*/
 /*	$NetBSD: virtiovar.h,v 1.1 2011/10/30 12:12:21 hannken Exp $	*/
 
 /*
@@ -85,6 +85,11 @@
 #define VIRTIO_CF_PREFER_VERSION_1	4
 #define VIRTIO_CF_NO_VERSION_1		8
 
+struct virtio_attach_args {
+	int			 va_devid;	/* virtio device id */
+	unsigned int		 va_nintr;	/* number of intr vectors */
+};
+
 struct vq_entry {
 	SLIST_ENTRY(vq_entry)	 qe_list;	/* free list */
 	uint16_t		 qe_index;	/* index in vq_desc array */
@@ -122,19 +127,17 @@ struct virtqueue {
 	/* free entry management */
 	struct vq_entry		*vq_entries;
 	SLIST_HEAD(, vq_entry) vq_freelist;
-	struct mutex		*vq_freelist_lock;
 
 	/* enqueue/dequeue status */
 	uint16_t		vq_avail_idx;
 	uint16_t		vq_used_idx;
 	int			vq_queued;
-	struct mutex		*vq_aring_lock;
-	struct mutex		*vq_uring_lock;
 
 	/* interrupt handler */
 	int			(*vq_done)(struct virtqueue*);
 	/* 1.x only: offset for notify address calculation */
 	uint32_t		vq_notify_off;
+	int			vq_intr_vec;
 };
 
 struct virtio_feature_name {
@@ -154,6 +157,7 @@ struct virtio_ops {
 	void		(*write_dev_cfg_8)(struct virtio_softc *, int, uint64_t);
 	uint16_t	(*read_queue_size)(struct virtio_softc *, uint16_t);
 	void		(*setup_queue)(struct virtio_softc *, struct virtqueue *, uint64_t);
+	void		(*setup_intrs)(struct virtio_softc *);
 	int		(*get_status)(struct virtio_softc *);
 	void		(*set_status)(struct virtio_softc *, int);
 	int		(*neg_features)(struct virtio_softc *, const struct virtio_feature_name *);
@@ -165,7 +169,7 @@ struct virtio_ops {
 struct virtio_softc {
 	struct device		 sc_dev;
 	bus_dma_tag_t		 sc_dmat;	/* set by transport */
-	struct virtio_ops	*sc_ops;	/* set by transport */
+	const struct virtio_ops	*sc_ops;	/* set by transport */
 
 	int			 sc_ipl;		/* set by child */
 
@@ -177,7 +181,6 @@ struct virtio_softc {
 	int			 sc_nvqs;	/* set by child */
 	struct virtqueue	*sc_vqs;	/* set by child */
 
-	int			 sc_childdevid;	/* set by transport */
 	struct device		*sc_child;	/* set by child,
 						 * VIRTIO_CHILD_ERROR on error
 						 */
@@ -212,7 +215,7 @@ virtio_has_feature(struct virtio_softc *sc, uint64_t fbit)
 	return 0;
 }
 
-int virtio_alloc_vq(struct virtio_softc*, struct virtqueue*, int, int, int,
+int virtio_alloc_vq(struct virtio_softc*, struct virtqueue*, int, int,
 		    const char*);
 int virtio_free_vq(struct virtio_softc*, struct virtqueue*);
 void virtio_reset(struct virtio_softc *);

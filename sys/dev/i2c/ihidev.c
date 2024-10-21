@@ -1,4 +1,4 @@
-/* $OpenBSD: ihidev.c,v 1.29 2023/08/12 10:03:05 kettenis Exp $ */
+/* $OpenBSD: ihidev.c,v 1.33 2024/10/18 12:53:49 tobhe Exp $ */
 /*
  * HID-over-i2c driver
  *
@@ -67,6 +67,7 @@ int	ihidev_activate(struct device *, int);
 
 int	ihidev_hid_command(struct ihidev_softc *, int, void *);
 int	ihidev_intr(void *);
+int	ihidev_poweron(struct ihidev_softc *);
 int	ihidev_reset(struct ihidev_softc *);
 int	ihidev_hid_desc_parse(struct ihidev_softc *);
 
@@ -145,11 +146,7 @@ ihidev_attach(struct device *parent, struct device *self, void *aux)
 
 	sc->sc_nrepid++;
 	sc->sc_subdevs = mallocarray(sc->sc_nrepid, sizeof(struct ihidev *),
-	    M_DEVBUF, M_NOWAIT | M_ZERO);
-	if (sc->sc_subdevs == NULL) {
-		printf("%s: failed allocating memory\n", sc->sc_dev.dv_xname);
-		return;
-	}
+	    M_DEVBUF, M_WAITOK | M_ZERO);
 
 	/* find largest report size and allocate memory for input buffer */
 	sc->sc_isize = letoh16(sc->hid_desc.wMaxInputLength);
@@ -163,7 +160,7 @@ ihidev_attach(struct device *parent, struct device *self, void *aux)
 			DPRINTF(("%s: repid %d size %d\n", sc->sc_dev.dv_xname,
 			    repid, repsz));
 	}
-	sc->sc_ibuf = malloc(sc->sc_isize, M_DEVBUF, M_NOWAIT | M_ZERO);
+	sc->sc_ibuf = malloc(sc->sc_isize, M_DEVBUF, M_WAITOK | M_ZERO);
 
 	iha.iaa = ia;
 	iha.parent = sc;
@@ -233,11 +230,13 @@ int
 ihidev_activate(struct device *self, int act)
 {
 	struct ihidev_softc *sc = (struct ihidev_softc *)self;
+	int rv;
 
 	DPRINTF(("%s(%d)\n", __func__, act));
 
 	switch (act) {
 	case DVACT_QUIESCE:
+		rv = config_activate_children(self, act);
 		sc->sc_dying = 1;
 		if (sc->sc_poll && timeout_initialized(&sc->sc_timer)) {
 			DPRINTF(("%s: cancelling polling\n",
@@ -250,16 +249,17 @@ ihidev_activate(struct device *self, int act)
 			    sc->sc_dev.dv_xname);
 		break;
 	case DVACT_WAKEUP:
-		ihidev_reset(sc);
+		ihidev_poweron(sc);
 		sc->sc_dying = 0;
 		if (sc->sc_poll && timeout_initialized(&sc->sc_timer))
 			timeout_add(&sc->sc_timer, 2000);
+		rv = config_activate_children(self, act);
+		break;
+	default:
+		rv = config_activate_children(self, act);
 		break;
 	}
-
-	config_activate_children(self, act);
-
-	return 0;
+	return rv;
 }
 
 void
@@ -371,7 +371,7 @@ ihidev_hid_command(struct ihidev_softc *sc, int hidcmd, void *arg)
 		 * rreq->data.
 		 */
 		report_len += report_id_len;
-		tmprep = malloc(report_len, M_DEVBUF, M_NOWAIT | M_ZERO);
+		tmprep = malloc(report_len, M_DEVBUF, M_WAITOK | M_ZERO);
 
 		/* type 3 id 8: 22 00 38 02 23 00 */
 		res = iic_exec(sc->sc_tag, I2C_OP_READ_WITH_STOP, sc->sc_addr,
@@ -462,7 +462,7 @@ ihidev_hid_command(struct ihidev_softc *sc, int hidcmd, void *arg)
 		cmd[dataoff] = rreq->id;
 
 		finalcmd = malloc(cmdlen + rreq->len, M_DEVBUF,
-		    M_NOWAIT | M_ZERO);
+		    M_WAITOK | M_ZERO);
 
 		memcpy(finalcmd, cmd, cmdlen);
 		memcpy(finalcmd + cmdlen, rreq->data, rreq->len);
@@ -526,7 +526,7 @@ ihidev_hid_command(struct ihidev_softc *sc, int hidcmd, void *arg)
 }
 
 int
-ihidev_reset(struct ihidev_softc *sc)
+ihidev_poweron(struct ihidev_softc *sc)
 {
 	DPRINTF(("%s: resetting\n", sc->sc_dev.dv_xname));
 
@@ -536,6 +536,16 @@ ihidev_reset(struct ihidev_softc *sc)
 	}
 
 	ihidev_sleep(sc, 100);
+
+	return 0;
+}
+
+
+int
+ihidev_reset(struct ihidev_softc *sc)
+{
+	if (ihidev_poweron(sc))
+		return (1);
 
 	if (ihidev_hid_command(sc, I2C_HID_CMD_RESET, 0)) {
 		printf("%s: failed to reset hardware\n", sc->sc_dev.dv_xname);
@@ -599,7 +609,7 @@ ihidev_hid_desc_parse(struct ihidev_softc *sc)
 	}
 
 	sc->sc_reportlen = letoh16(sc->hid_desc.wReportDescLength);
-	sc->sc_report = malloc(sc->sc_reportlen, M_DEVBUF, M_NOWAIT | M_ZERO);
+	sc->sc_report = malloc(sc->sc_reportlen, M_DEVBUF, M_WAITOK | M_ZERO);
 
 	if (ihidev_hid_command(sc, I2C_HID_REPORT_DESCR, 0)) {
 		printf("%s: failed fetching HID report\n",
@@ -628,9 +638,6 @@ ihidev_intr(void *arg)
 	int psize, res, i, fast = 0;
 	u_char *p;
 	u_int rep = 0;
-
-	if (sc->sc_dying)
-		return 1;
 
 	if (sc->sc_poll && !sc->sc_frompoll) {
 		DPRINTF(("%s: received interrupt while polling, disabling "
@@ -708,7 +715,8 @@ ihidev_intr(void *arg)
 		return (1);
 	}
 
-	scd->sc_intr(scd, p, psize);
+	if (!sc->sc_dying)
+		scd->sc_intr(scd, p, psize);
 
 	if (sc->sc_poll && (fast != sc->sc_fastpoll)) {
 		DPRINTF(("%s: %s->%s polling\n", sc->sc_dev.dv_xname,
@@ -787,7 +795,7 @@ ihidev_open(struct ihidev *scd)
 		return (0);
 
 	/* power on */
-	ihidev_reset(sc);
+	ihidev_poweron(sc);
 
 	if (sc->sc_poll) {
 		if (!timeout_initialized(&sc->sc_timer))

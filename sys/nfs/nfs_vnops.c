@@ -1,4 +1,4 @@
-/*	$OpenBSD: nfs_vnops.c,v 1.200 2024/05/14 06:26:05 jsg Exp $	*/
+/*	$OpenBSD: nfs_vnops.c,v 1.205 2024/10/18 05:52:32 miod Exp $	*/
 /*	$NetBSD: nfs_vnops.c,v 1.62.4.1 1996/07/08 20:26:52 jtc Exp $	*/
 
 /*
@@ -88,7 +88,6 @@ int nfs_mkdir(void *);
 int nfs_mknod(void *);
 int nfs_mknodrpc(struct vnode *, struct vnode **, struct componentname *,
 	struct vattr *);
-int nfs_null(struct vnode *, struct ucred *, struct proc *);
 int nfs_open(void *);
 int nfs_pathconf(void *);
 int nfs_print(void *);
@@ -268,22 +267,6 @@ nfs_cache_enter(struct vnode *dvp, struct vnode *vp, struct componentname *cnp)
 	}
 
 	cache_enter(dvp, vp, cnp);
-}
-
-/*
- * nfs null call from vfs.
- */
-int
-nfs_null(struct vnode *vp, struct ucred *cred, struct proc *procp)
-{
-	struct nfsm_info	 info;
-	int			 error = 0;
-
-	info.nmi_mb = info.nmi_mreq = nfsm_reqhead(0);
-	info.nmi_errorp = &error;
-	error = nfs_request(vp, NFSPROC_NULL, &info);
-	m_freem(info.nmi_mrep);
-	return (error);
 }
 
 /*
@@ -557,6 +540,7 @@ nfsm_loadattr(struct nfsm_info *infop, struct vnode **vpp, struct vattr *vap)
 	error = nfs_loadattrcache(&ttvp, &infop->nmi_md, &infop->nmi_dpos, vap);
 	if (error != 0) {
 		m_freem(infop->nmi_mrep);
+		infop->nmi_mrep = NULL;
 		*infop->nmi_errorp = error;
 		return error;
 	}
@@ -669,7 +653,7 @@ nfs_setattr(void *v)
 			tsize = np->n_size;
 			np->n_size = np->n_vattr.va_size = vap->va_size;
 			uvm_vnp_setsize(vp, np->n_size);
-		};
+		}
 	} else if ((vap->va_mtime.tv_nsec != VNOVAL ||
 		vap->va_atime.tv_nsec != VNOVAL) &&
 		vp->v_type == VREG &&
@@ -798,6 +782,7 @@ nfsm_getfh(struct nfsm_info *infop, int *sizep, int v3)
 		size = fxdr_unsigned(int, *tl);
 		if (size <= 0 || size > NFSX_V3FHMAX) {
 			m_freem(infop->nmi_mrep);
+			infop->nmi_mrep = NULL;
 			*infop->nmi_errorp = EBADRPC;
 			return NULL;
 		}
@@ -1417,6 +1402,7 @@ nfsm_mtofh(struct nfsm_info *infop, struct vnode *dvp, struct vnode **vpp,
 		error = nfs_nget(dvp->v_mount, ttfhp, ttfhsize, &ttnp);
 		if (error != 0) {
 			m_freem(infop->nmi_mrep);
+			infop->nmi_mrep = NULL;
 			*infop->nmi_errorp = error;
 			return error;
 		}
@@ -2276,6 +2262,11 @@ nfs_readdir(void *v)
 
 			dp->d_reclen -= NFS_DIRENT_OVERHEAD;
 			dp->d_off = fxdr_hyper(&ndp->cookie[0]);
+
+			if (memchr(dp->d_name, '/', dp->d_namlen) != NULL) {
+				error = EBADRPC;
+				break;
+			}
 
 			if (uio->uio_resid < dp->d_reclen) {
 				eof = 0;
@@ -3296,6 +3287,7 @@ nfs_advlock(void *v)
 int
 nfs_print(void *v)
 {
+#if defined(DEBUG) || defined(DIAGNOSTIC) || defined(VFSLCKDEBUG)
 	struct vop_print_args *ap = v;
 	struct vnode *vp = ap->a_vp;
 	struct nfsnode *np = VTONFS(vp);
@@ -3307,6 +3299,7 @@ nfs_print(void *v)
 		fifo_printinfo(vp);
 #endif
 	printf("\n");
+#endif
 	return (0);
 }
 

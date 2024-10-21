@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_pledge.c,v 1.314 2024/05/18 05:20:22 guenther Exp $	*/
+/*	$OpenBSD: kern_pledge.c,v 1.321 2024/10/06 23:39:24 jsg Exp $	*/
 
 /*
  * Copyright (c) 2015 Nicholas Marriott <nicm@openbsd.org>
@@ -73,9 +73,8 @@
 
 #if defined(__amd64__)
 #include "vmm.h"
-#if NVMM > 0
+#include "psp.h"
 #include <machine/conf.h>
-#endif
 #endif
 
 #include "drm.h"
@@ -85,16 +84,6 @@ int	 parsepledges(struct proc *p, const char *kname,
 	    const char *promises, u_int64_t *fp);
 int	 canonpath(const char *input, char *buf, size_t bufsize);
 void	 unveil_destroy(struct process *ps);
-
-/* #define DEBUG_PLEDGE */
-#ifdef DEBUG_PLEDGE
-int debug_pledge = 1;
-#define DPRINTF(x...)    do { if (debug_pledge) printf(x); } while (0)
-#define DNPRINTF(n,x...) do { if (debug_pledge >= (n)) printf(x); } while (0)
-#else
-#define DPRINTF(x...)
-#define DNPRINTF(n,x...)
-#endif
 
 /*
  * Ordered in blocks starting with least risky and most required.
@@ -574,7 +563,7 @@ pledge_fail(struct proc *p, int error, uint64_t code)
 		return (ENOSYS);
 
 	KERNEL_LOCK();
-	log(LOG_ERR, "%s[%d]: pledge \"%s\", syscall %d\n",
+	uprintf("%s[%d]: pledge \"%s\", syscall %d\n",
 	    p->p_p->ps_comm, p->p_p->ps_pid, codes, p->p_pledge_syscall);
 	p->p_p->ps_acflag |= APLEDGE;
 
@@ -998,14 +987,19 @@ pledge_sysctl(struct proc *p, int miblen, int *mib, void *new)
 	    mib[0] == CTL_MACHDEP && mib[1] == CPU_ID_AA64ISAR0)
 		return (0);
 #endif /* CPU_ID_AA64ISAR0 */
+#ifdef CPU_ID_AA64ISAR1
+	if (miblen == 2 &&		/* arm64 libcrypto inspects CPU features */
+	    mib[0] == CTL_MACHDEP && mib[1] == CPU_ID_AA64ISAR1)
+		return (0);
+#endif /* CPU_ID_AA64ISAR1 */
 
 	snprintf(buf, sizeof(buf), "%s(%d): pledge sysctl %d:",
 	    p->p_p->ps_comm, p->p_p->ps_pid, miblen);
 	for (i = 0; i < miblen; i++) {
-		char *p = buf + strlen(buf);
-		snprintf(p, sizeof(buf) - (p - buf), " %d", mib[i]);
+		char *s = buf + strlen(buf);
+		snprintf(s, sizeof(buf) - (s - buf), " %d", mib[i]);
 	}
-	log(LOG_ERR, "%s\n", buf);
+	uprintf("%s\n", buf);
 
 	return pledge_fail(p, EINVAL, 0);
 }
@@ -1345,6 +1339,18 @@ pledge_ioctl(struct proc *p, long com, struct file *fp)
 			error = pledge_ioctl_vmm(p, com);
 			if (error == 0)
 				return 0;
+		}
+	}
+#endif
+
+#if NPSP > 0
+	if ((pledge & PLEDGE_VMM)) {
+		if ((fp->f_type == DTYPE_VNODE) &&
+		    (vp->v_type == VCHR) &&
+		    (cdevsw[major(vp->v_rdev)].d_open == pspopen)) {
+			error = pledge_ioctl_psp(p, com);
+			if (error == 0)
+				return (0);
 		}
 	}
 #endif

@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.258 2024/05/20 15:51:43 claudio Exp $ */
+/*	$OpenBSD: main.c,v 1.267 2024/09/27 12:52:58 tb Exp $ */
 /*
  * Copyright (c) 2021 Claudio Jeker <claudio@openbsd.org>
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
@@ -481,7 +481,7 @@ queue_add_from_tal(struct tal *tal)
 	/* steal the pkey from the tal structure */
 	data = tal->pkey;
 	tal->pkey = NULL;
-	entityq_add(NULL, nfile, RTYPE_CER, DIR_VALID, repo, data,
+	entityq_add(NULL, nfile, RTYPE_CER, DIR_UNKNOWN, repo, data,
 	    tal->pkeysz, tal->id, tal->id, NULL);
 }
 
@@ -577,7 +577,7 @@ entity_process(struct ibuf *b, struct stats *st, struct vrp_tree *tree,
 	time_t		 mtime;
 	unsigned int	 id;
 	int		 talid;
-	int		 c;
+	int		 ok = 1;
 
 	/*
 	 * For most of these, we first read whether there's any content
@@ -595,7 +595,7 @@ entity_process(struct ibuf *b, struct stats *st, struct vrp_tree *tree,
 	if (filemode)
 		goto done;
 
-	if (filepath_add(&fpt, file, talid, mtime) == 0) {
+	if (filepath_valid(&fpt, file, talid)) {
 		warnx("%s: File already visited", file);
 		goto done;
 	}
@@ -611,13 +611,14 @@ entity_process(struct ibuf *b, struct stats *st, struct vrp_tree *tree,
 		tal_free(tal);
 		break;
 	case RTYPE_CER:
-		io_read_buf(b, &c, sizeof(c));
-		if (c == 0) {
+		io_read_buf(b, &ok, sizeof(ok));
+		if (ok == 0) {
 			repo_stat_inc(rp, talid, type, STYPE_FAIL);
 			break;
 		}
 		cert = cert_read(b);
 		switch (cert->purpose) {
+		case CERT_PURPOSE_TA:
 		case CERT_PURPOSE_CA:
 			queue_add_from_cert(cert);
 			break;
@@ -626,14 +627,14 @@ entity_process(struct ibuf *b, struct stats *st, struct vrp_tree *tree,
 			repo_stat_inc(rp, talid, type, STYPE_BGPSEC);
 			break;
 		default:
-			errx(1, "unexpected cert purpose received");
+			errx(1, "unexpected %s", purpose2str(cert->purpose));
 			break;
 		}
 		cert_free(cert);
 		break;
 	case RTYPE_MFT:
-		io_read_buf(b, &c, sizeof(c));
-		if (c == 0) {
+		io_read_buf(b, &ok, sizeof(ok));
+		if (ok == 0) {
 			repo_stat_inc(rp, talid, type, STYPE_FAIL);
 			break;
 		}
@@ -646,8 +647,8 @@ entity_process(struct ibuf *b, struct stats *st, struct vrp_tree *tree,
 		entity_queue++;
 		break;
 	case RTYPE_ROA:
-		io_read_buf(b, &c, sizeof(c));
-		if (c == 0) {
+		io_read_buf(b, &ok, sizeof(ok));
+		if (ok == 0) {
 			repo_stat_inc(rp, talid, type, STYPE_FAIL);
 			break;
 		}
@@ -661,8 +662,8 @@ entity_process(struct ibuf *b, struct stats *st, struct vrp_tree *tree,
 	case RTYPE_GBR:
 		break;
 	case RTYPE_ASPA:
-		io_read_buf(b, &c, sizeof(c));
-		if (c == 0) {
+		io_read_buf(b, &ok, sizeof(ok));
+		if (ok == 0) {
 			repo_stat_inc(rp, talid, type, STYPE_FAIL);
 			break;
 		}
@@ -674,8 +675,8 @@ entity_process(struct ibuf *b, struct stats *st, struct vrp_tree *tree,
 		aspa_free(aspa);
 		break;
 	case RTYPE_SPL:
-		io_read_buf(b, &c, sizeof(c));
-		if (c == 0) {
+		io_read_buf(b, &ok, sizeof(ok));
+		if (ok == 0) {
 			if (experimental)
 				repo_stat_inc(rp, talid, type, STYPE_FAIL);
 			break;
@@ -695,6 +696,9 @@ entity_process(struct ibuf *b, struct stats *st, struct vrp_tree *tree,
 		warnx("%s: unknown entity type %d", file, type);
 		break;
 	}
+
+	if (filepath_add(&fpt, file, talid, mtime, ok) == 0)
+		errx(1, "%s: File already in tree", file);
 
 done:
 	free(file);
@@ -874,6 +878,8 @@ load_skiplist(const char *slf)
 		LIST_INSERT_HEAD(&skiplist, le, entry);
 		stats.skiplistentries++;
 	}
+	if (ferror(fp))
+		err(1, "error reading %s", slf);
 
 	fclose(fp);
 	free(line);
@@ -1005,7 +1011,7 @@ main(int argc, char *argv[])
 	    "proc exec unveil", NULL) == -1)
 		err(1, "pledge");
 
-	while ((c = getopt(argc, argv, "Ab:Bcd:e:fH:jmnoP:rRs:S:t:T:vVx")) != -1)
+	while ((c = getopt(argc, argv, "Ab:Bcd:e:fH:jmnoP:Rs:S:t:T:vVx")) != -1)
 		switch (c) {
 		case 'A':
 			excludeaspa = 1;
@@ -1053,9 +1059,6 @@ main(int argc, char *argv[])
 			break;
 		case 'R':
 			rrdpon = 0;
-			break;
-		case 'r': /* Remove after OpenBSD 7.3 */
-			rrdpon = 1;
 			break;
 		case 's':
 			timeout = strtonum(optarg, 0, 24*60*60, &errs);
@@ -1281,13 +1284,13 @@ main(int argc, char *argv[])
 	while (entity_queue > 0 && !killme) {
 		int polltim;
 
+		polltim = repo_check_timeout(INFTIM);
+
 		for (i = 0; i < NPFD; i++) {
 			pfd[i].events = POLLIN;
-			if (queues[i]->queued)
+			if (msgbuf_queuelen(queues[i]) > 0)
 				pfd[i].events |= POLLOUT;
 		}
-
-		polltim = repo_check_timeout(INFTIM);
 
 		if (poll(pfd, NPFD, polltim) == -1) {
 			if (errno == EINTR)
@@ -1485,9 +1488,12 @@ main(int argc, char *argv[])
 	    "invalid)\n", stats.repo_tal_stats.aspas,
 	    stats.repo_tal_stats.aspas_fail,
 	    stats.repo_tal_stats.aspas_invalid);
-	printf("Signed Prefix Lists: %u (%u failed parse, %u invalid)\n",
-	    stats.repo_tal_stats.spls, stats.repo_tal_stats.spls_fail,
-	    stats.repo_tal_stats.spls_invalid);
+	if (experimental) {
+		printf("Signed Prefix Lists: %u "
+		    "(%u failed parse, %u invalid)\n",
+		    stats.repo_tal_stats.spls, stats.repo_tal_stats.spls_fail,
+		    stats.repo_tal_stats.spls_invalid);
+	}
 	printf("BGPsec Router Certificates: %u\n", stats.repo_tal_stats.brks);
 	printf("Certificates: %u (%u invalid)\n",
 	    stats.repo_tal_stats.certs, stats.repo_tal_stats.certs_fail);
@@ -1520,7 +1526,7 @@ main(int argc, char *argv[])
 
 usage:
 	fprintf(stderr,
-	    "usage: rpki-client [-ABcjmnoRrVvx] [-b sourceaddr] [-d cachedir]"
+	    "usage: rpki-client [-ABcjmnoRVvx] [-b sourceaddr] [-d cachedir]"
 	    " [-e rsync_prog]\n"
 	    "                   [-H fqdn] [-P epoch] [-S skiplist] [-s timeout]"
 	    " [-T table]\n"

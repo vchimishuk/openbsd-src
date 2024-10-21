@@ -144,13 +144,13 @@ i915_ttm_place_from_region(const struct intel_memory_region *mr,
 		place->fpfn = offset >> PAGE_SHIFT;
 		WARN_ON(overflows_type(place->fpfn + (size >> PAGE_SHIFT), place->lpfn));
 		place->lpfn = place->fpfn + (size >> PAGE_SHIFT);
-	} else if (mr->io_size && mr->io_size < mr->total) {
+	} else if (resource_size(&mr->io) && resource_size(&mr->io) < mr->total) {
 		if (flags & I915_BO_ALLOC_GPU_ONLY) {
 			place->flags |= TTM_PL_FLAG_TOPDOWN;
 		} else {
 			place->fpfn = 0;
-			WARN_ON(overflows_type(mr->io_size >> PAGE_SHIFT, place->lpfn));
-			place->lpfn = mr->io_size >> PAGE_SHIFT;
+			WARN_ON(overflows_type(resource_size(&mr->io) >> PAGE_SHIFT, place->lpfn));
+			place->lpfn = resource_size(&mr->io) >> PAGE_SHIFT;
 		}
 	}
 }
@@ -1121,7 +1121,7 @@ static vm_fault_t vm_fault_ttm(struct vm_fault *vmf)
 			struct intel_memory_region *mr = obj->mm.placements[i];
 			unsigned int flags;
 
-			if (!mr->io_size && mr->type != INTEL_MEMORY_SYSTEM)
+			if (!resource_size(&mr->io) && mr->type != INTEL_MEMORY_SYSTEM)
 				continue;
 
 			flags = obj->flags;
@@ -1167,7 +1167,7 @@ static vm_fault_t vm_fault_ttm(struct vm_fault *vmf)
 		GEM_WARN_ON(!i915_ttm_cpu_maps_iomem(bo->resource));
 	}
 
-	if (wakeref & CONFIG_DRM_I915_USERFAULT_AUTOSUSPEND)
+	if (wakeref && CONFIG_DRM_I915_USERFAULT_AUTOSUSPEND != 0)
 		intel_wakeref_auto(&to_i915(obj->base.dev)->runtime_pm.userfault_wakeref,
 				   msecs_to_jiffies_timeout(CONFIG_DRM_I915_USERFAULT_AUTOSUSPEND));
 
@@ -1295,7 +1295,7 @@ vm_fault_ttm(struct uvm_faultinfo *ufi, vaddr_t vaddr, vm_page_t *pps,
 			struct intel_memory_region *mr = obj->mm.placements[i];
 			unsigned int flags;
 
-			if (!mr->io_size && mr->type != INTEL_MEMORY_SYSTEM)
+			if (!resource_size(&mr->io) && mr->type != INTEL_MEMORY_SYSTEM)
 				continue;
 
 			flags = obj->flags;

@@ -1,4 +1,4 @@
-.\"	$OpenBSD: python-module.5,v 1.11 2024/04/17 13:34:23 sthen Exp $
+.\"	$OpenBSD: python-module.5,v 1.13 2024/07/25 15:36:56 sthen Exp $
 .\"
 .\" Copyright (c) 2008 Marc Espie
 .\"
@@ -24,7 +24,7 @@
 .\" (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 .\" THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd $Mdocdate: April 17 2024 $
+.Dd $Mdocdate: July 25 2024 $
 .Dt PYTHON-MODULE 5
 .Os
 .Sh NAME
@@ -113,8 +113,8 @@ If the port provides a
 .Pa pyproject.toml
 file, check the "build-backend" line in the [build-system] section.
 .Nm
-currently supports flit_core, hatchling, hatch-vcs, jupyter_packaging,
-maturin, poetry-core, setuptools and setuptools_scm.
+currently supports flit, flit_core, hatchling, hatch-vcs, jupyter_packaging,
+maturin, pdm, poetry-core, setuptools and setuptools_scm.
 If no
 .Pa pyproject.toml
 is provided then it probably uses setuptools.
@@ -127,7 +127,9 @@ and sets
 In cases where a less common backend is used, or where the build backend is
 distributed with the software itself,
 .Ev MODPY_PYBUILD
-can be set to other to use the PEP 517 mechanism without adding a dependency
+can be set to
+.Sq other
+to use the PEP 517 mechanism without adding a dependency
 for a backend.
 .Pp
 Older ports using setuptools still set
@@ -165,6 +167,11 @@ to disable certain test scripts with
 .Sq --ignore ,
 or to disable certain individual tests with
 .Sq -k .
+User setting
+.Ev MODPY_PYTEST_USERARGS ,
+if present, is passed on the command line.
+This allows setting py.test flags to increase verbosity,
+show test durations, enable colours, etc.
 .Pp
 All ports that generate egg-info or dist-info files should set
 .Ev MODPY_EGG_VERSION
@@ -181,6 +188,16 @@ ${MODPY_BIN}, list them in
 These filenames can be relative to ${WRKSRC} and will be modified
 at the end of
 .Cm pre-configure .
+.Pp
+For ports not using standard Python build infrastructure,
+it may be necessary to bytecode-compile installed .py files.
+This can be done by using
+.Ev ${MODPY_COMPILEALL} ,
+usually in a post-install target.
+This passes flags to use MAKE_JOBS, strip off WRKINST, and use
+standard optimization passes.
+File or directory names can be given.
+Directories are handled recursively.
 .Pp
 This module also affects
 .Ev CATEGORIES ,

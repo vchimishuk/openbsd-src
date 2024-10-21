@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.h,v 1.170 2024/05/21 23:16:06 jsg Exp $	*/
+/*	$OpenBSD: cpu.h,v 1.178 2024/10/07 20:30:17 dv Exp $	*/
 /*	$NetBSD: cpu.h,v 1.1 2003/04/26 18:39:39 fvdl Exp $	*/
 
 /*-
@@ -73,8 +73,8 @@ struct vmx {
 	uint32_t	vmx_vmxon_revision;
 	uint32_t	vmx_msr_table_size;
 	uint32_t	vmx_cr3_tgt_count;
-	uint64_t	vmx_vm_func;
 	uint8_t		vmx_has_l1_flush_msr;
+	uint64_t	vmx_invept_mode;
 };
 
 /*
@@ -170,6 +170,10 @@ struct cpu_info {
 	u_int32_t	ci_feature_sefflags_ecx;/* [I] */
 	u_int32_t	ci_feature_sefflags_edx;/* [I] */
 	u_int32_t	ci_feature_amdspec_ebx;	/* [I] */
+	u_int32_t	ci_feature_amdsev_eax;	/* [I] */
+	u_int32_t	ci_feature_amdsev_ebx;	/* [I] */
+	u_int32_t	ci_feature_amdsev_ecx;	/* [I] */
+	u_int32_t	ci_feature_amdsev_edx;	/* [I] */
 	u_int32_t	ci_feature_tpmflags;	/* [I] */
 	u_int32_t	ci_pnfeatset;		/* [I] */
 	u_int32_t	ci_efeature_eax;	/* [I] */
@@ -233,12 +237,12 @@ struct cpu_info {
 	union		vmm_cpu_cap ci_vmm_cap;
 	paddr_t		ci_vmxon_region_pa;
 	struct vmxon_region *ci_vmxon_region;
-	struct vcpu	*ci_guest_vcpu;		/* [o] last vcpu resumed */
-
-	char		ci_panicbuf[512];
-
 	paddr_t		ci_vmcs_pa;
 	struct rwlock	ci_vmcs_lock;
+	struct pmap		*ci_ept_pmap;	/* [o] last used EPT pmap */
+	struct vcpu		*ci_guest_vcpu;	/* [o] last vcpu resumed */
+
+	char		ci_panicbuf[512];
 
 	struct clockqueue ci_queue;
 };
@@ -319,7 +323,7 @@ void cpu_unidle(struct cpu_info *);
 #define cpu_kick(ci)
 #define cpu_unidle(ci)
 
-#define CPU_BUSY_CYCLE()	do {} while (0)
+#define CPU_BUSY_CYCLE()	__asm volatile ("" ::: "memory")
 
 #endif
 
@@ -394,12 +398,15 @@ extern int cpu_feature;
 extern int cpu_ebxfeature;
 extern int cpu_ecxfeature;
 extern int ecpu_ecxfeature;
+extern int cpu_sev_guestmode;
 extern int cpu_id;
 extern char cpu_vendor[];
 extern int cpuid_level;
 extern int cpu_meltdown;
 extern u_int cpu_mwait_size;
 extern u_int cpu_mwait_states;
+
+int	cpu_suspend_primary(void);
 
 /* cacheinfo.c */
 void	x86_print_cacheinfo(struct cpu_info *);
@@ -408,6 +415,7 @@ void	x86_print_cacheinfo(struct cpu_info *);
 void	identifycpu(struct cpu_info *);
 int	cpu_amd64speed(int *);
 extern int cpuspeed;
+extern int amd64_pos_cbit;
 
 /* machdep.c */
 void	dumpconf(void);
@@ -418,6 +426,7 @@ void	cpu_proc_fork(struct proc *, struct proc *);
 int	amd64_pa_used(paddr_t);
 #define	cpu_idle_enter()	do { /* nothing */ } while (0)
 extern void (*cpu_idle_cycle_fcn)(void);
+extern void (*cpu_suspend_cycle_fcn)(void);
 #define	cpu_idle_cycle()	(*cpu_idle_cycle_fcn)()
 #define	cpu_idle_leave()	do { /* nothing */ } while (0)
 extern void (*initclock_func)(void);

@@ -1,4 +1,4 @@
-/*	$OpenBSD: machdep.c,v 1.671 2024/05/26 13:37:32 kettenis Exp $	*/
+/*	$OpenBSD: machdep.c,v 1.674 2024/07/29 18:43:11 kettenis Exp $	*/
 /*	$NetBSD: machdep.c,v 1.214 1996/11/10 03:16:17 thorpej Exp $	*/
 
 /*-
@@ -115,6 +115,7 @@
 
 #include "acpi.h"
 #if NACPI > 0
+#include <dev/acpi/acpireg.h>
 #include <dev/acpi/acpivar.h>
 #endif
 
@@ -167,6 +168,7 @@ char machine[] = MACHINE;
 void (*cpu_idle_leave_fcn)(void) = NULL;
 void (*cpu_idle_cycle_fcn)(void) = NULL;
 void (*cpu_idle_enter_fcn)(void) = NULL;
+void (*cpu_suspend_cycle_fcn)(void);
 
 
 struct uvm_constraint_range  isa_constraint = { 0x0, 0x00ffffffUL };
@@ -1118,7 +1120,7 @@ cyrix3_cpu_setup(struct cpu_info *ci)
 		/*
 		 * C3 Nehemiah & later: fall through.
 		 */
-	
+
 	case 10: /* C7-M Type A */
 	case 13: /* C7-M Type D */
 	case 15: /* Nano */
@@ -1767,7 +1769,7 @@ identifycpu(struct cpu_info *ci)
 		 * with eax 0x01
 		 */
 
-		cpuid(0x01, regs); 
+		cpuid(0x01, regs);
 		ci->ci_cflushsz = ((regs[1] >> 8) & 0xff) * 8;
 	}
 
@@ -2281,7 +2283,7 @@ p3_get_bus_clock(struct cpu_info *ci)
 			goto print_msr;
 		}
 		break;
-	default: 
+	default:
 		/* no FSB on modern Intel processors */
 		break;
 	}
@@ -2597,6 +2599,11 @@ struct pcb dumppcb;
 __dead void
 boot(int howto)
 {
+#if NACPI > 0
+	if ((howto & RB_POWERDOWN) != 0 && acpi_softc)
+		acpi_softc->sc_state = ACPI_STATE_S5;
+#endif
+
 	if ((howto & RB_POWERDOWN) != 0)
 		lid_action = 0;
 
@@ -3188,7 +3195,7 @@ init386(paddr_t first_avail)
 	if (bios_memmap == NULL)
 		panic("no BIOS memory map supplied");
 #endif
- 
+
 	/*
 	 * account all the memory passed in the map from /boot
 	 * calculate avail_end and count the physmem.

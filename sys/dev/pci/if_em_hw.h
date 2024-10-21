@@ -31,7 +31,7 @@
 
 *******************************************************************************/
 
-/* $OpenBSD: if_em_hw.h,v 1.94 2024/05/13 01:15:51 jsg Exp $ */
+/* $OpenBSD: if_em_hw.h,v 1.97 2024/09/04 07:54:52 mglocker Exp $ */
 /* $FreeBSD: if_em_hw.h,v 1.15 2005/05/26 23:32:02 tackerman Exp $ */
 
 /* if_em_hw.h
@@ -408,8 +408,6 @@ struct em_host_mng_dhcp_cookie{
 };
 
 int32_t em_read_part_num(struct em_hw *hw, uint32_t *part_num);
-int32_t em_mng_write_dhcp_info(struct em_hw *hw, uint8_t *buffer,
-                                  uint16_t length);
 boolean_t em_check_mng_mode(struct em_hw *hw);
 boolean_t em_enable_tx_pkt_filtering(struct em_hw *hw);
 int32_t em_read_eeprom(struct em_hw *hw, uint16_t reg, uint16_t words, uint16_t *data);
@@ -1674,12 +1672,12 @@ struct em_hw {
 #define E1000_CTRL_EXT_GPI2_EN   0x00000004 /* Maps SDP6 to GPI2 */
 #define E1000_CTRL_EXT_LPCD      0x00000004 /* LCD Power Cycle Done */
 #define E1000_CTRL_EXT_GPI3_EN   0x00000008 /* Maps SDP7 to GPI3 */
-#define E1000_CTRL_EXT_SDP4_DATA 0x00000010 /* Value of SW Defineable Pin 4 */
-#define E1000_CTRL_EXT_SDP5_DATA 0x00000020 /* Value of SW Defineable Pin 5 */
+#define E1000_CTRL_EXT_SDP4_DATA 0x00000010 /* Value of SW Definable Pin 4 */
+#define E1000_CTRL_EXT_SDP5_DATA 0x00000020 /* Value of SW Definable Pin 5 */
 #define E1000_CTRL_EXT_PHY_INT   E1000_CTRL_EXT_SDP5_DATA
-#define E1000_CTRL_EXT_SDP6_DATA 0x00000040 /* Value of SW Defineable Pin 6 */
-#define E1000_CTRL_EXT_SDP7_DATA 0x00000080 /* Value of SW Defineable Pin 7 */
-#define E1000_CTRL_EXT_SDP3_DATA 0x00000080 /* Value of SW Defineable Pin 3 */
+#define E1000_CTRL_EXT_SDP6_DATA 0x00000040 /* Value of SW Definable Pin 6 */
+#define E1000_CTRL_EXT_SDP7_DATA 0x00000080 /* Value of SW Definable Pin 7 */
+#define E1000_CTRL_EXT_SDP3_DATA 0x00000080 /* Value of SW Definable Pin 3 */
 #define E1000_CTRL_EXT_SDP4_DIR  0x00000100 /* Direction of SDP4 0=in 1=out */
 #define E1000_CTRL_EXT_SDP5_DIR  0x00000200 /* Direction of SDP5 0=in 1=out */
 #define E1000_CTRL_EXT_SDP6_DIR  0x00000400 /* Direction of SDP6 0=in 1=out */
@@ -2438,7 +2436,7 @@ struct em_host_command_info {
 #define EEPROM_WRITE_OPCODE_MICROWIRE 0x5  /* EEPROM write opcode */
 #define EEPROM_ERASE_OPCODE_MICROWIRE 0x7  /* EEPROM erase opcode */
 #define EEPROM_EWEN_OPCODE_MICROWIRE  0x13 /* EEPROM erase/write enable */
-#define EEPROM_EWDS_OPCODE_MICROWIRE  0x10 /* EEPROM erast/write disable */
+#define EEPROM_EWDS_OPCODE_MICROWIRE  0x10 /* EEPROM erase/write disable */
 
 /* EEPROM Commands - SPI */
 #define EEPROM_MAX_RETRY_SPI        5000 /* Max wait of 5ms, for RDY signal */

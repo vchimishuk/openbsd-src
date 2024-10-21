@@ -1,4 +1,4 @@
-.\"	$OpenBSD: npppd.conf.5,v 1.32 2023/03/02 17:09:53 jmc Exp $
+.\"	$OpenBSD: npppd.conf.5,v 1.35 2024/07/11 14:05:59 yasuoka Exp $
 .\"
 .\" Copyright (c) 2012 YASUOKA Masahiko <yasuoka@openbsd.org>
 .\"
@@ -14,7 +14,7 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: March 2 2023 $
+.Dd $Mdocdate: July 11 2024 $
 .Dt NPPPD.CONF 5
 .Os
 .Sh NAME
@@ -41,6 +41,8 @@ Interface settings.
 Authentication settings.
 .It Sy Bind
 Bind settings.
+.It Sy RADIUS
+RADIUS settings.
 .El
 .Sh GLOBAL
 The global options are as follows:
@@ -506,8 +508,20 @@ The default is
 This option can be used multiple times.
 .It Ic dns-servers Ar primary-server-address Op Ar secondary-server-address
 Specify the DNS servers' IP addresses.
+When this option is not specified and the authenticated realm
+.Pq the RADIUS server
+specifies the DNS servers' addresses,
+they are used as the default.
+To stop using them, set this option to
+.Qq 0.0.0.0 .
 .It Ic nbns-servers Ar primary-server-address Op Ar secondary-server-address
 Specify the NetBIOS name servers' IP addresses.
+When this option is not specified and the authenticated realm
+.Pq the RADIUS server
+specifies the NetBIOS servers' addresses,
+they are used as the default.
+To stop using them, set this option to
+.Qq 0.0.0.0 .
 .It Ic allow-user-selected-address Ar yes | no
 Specify whether
 .Xr npppd 8
@@ -652,6 +666,32 @@ settings so that they are used together.
 .Pp
 .Ic bind tunnel from Ar tunnel Ic authenticated by Ar authentication
 .Ic to Ar ifname
+.Sh RADIUS
+.Ic radius
+configures the RADIUS features.
+The supported options are as follows:
+.Bl -tag -width Ds
+.It Ic radius nas-id Ar identifier
+Specify the
+.Ar identifier
+that is noticed to the RADIUS peers in the NAS-Identifier attribute.
+.It Ic radius dae listen on Ar address Oo port Ar number Oc
+Enable the Dynamic Authorization Extensions for RADIUS
+.Po DAE, RFC 5176 Pc
+server.
+Specify the local
+.Ar address
+.Xr npppd 8
+should listen on for the DAE requests.
+Optionally specify a port
+.Ar number ,
+the default port number is 3799.
+.It Ic radius dae client Ar address Ic secret Ar secret
+Specify
+.Ar address
+for a DAE client and
+.Ar secret .
+.El
 .Sh EXAMPLES
 A very simple configuration example is below:
 .Bd -literal -offset indent

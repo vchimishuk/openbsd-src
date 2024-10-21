@@ -1,4 +1,4 @@
-/* $OpenBSD: ec_local.h,v 1.27 2023/11/29 21:35:57 tb Exp $ */
+/* $OpenBSD: ec_local.h,v 1.30 2024/10/18 17:27:07 tb Exp $ */
 /*
  * Originally written by Bodo Moeller for the OpenSSL project.
  */
@@ -216,9 +216,6 @@ struct ec_group_st {
 	/* Montgomery context and values used by EC_GFp_mont_method. */
 	BN_MONT_CTX *mont_ctx;
 	BIGNUM *mont_one;
-
-	int (*field_mod_func)(BIGNUM *, const BIGNUM *, const BIGNUM *,
-	    BN_CTX *);
 } /* EC_GROUP */;
 
 struct ec_key_st {
@@ -358,7 +355,10 @@ int EC_POINT_set_Jprojective_coordinates(const EC_GROUP *group, EC_POINT *p,
 int EC_POINT_get_Jprojective_coordinates(const EC_GROUP *group,
     const EC_POINT *p, BIGNUM *x, BIGNUM *y, BIGNUM *z, BN_CTX *ctx);
 
+int ec_group_is_builtin_curve(const EC_GROUP *group);
+
 /* Public API in OpenSSL */
+const BIGNUM *EC_GROUP_get0_cofactor(const EC_GROUP *group);
 const BIGNUM *EC_GROUP_get0_order(const EC_GROUP *group);
 
 __END_HIDDEN_DECLS

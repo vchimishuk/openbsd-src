@@ -1,4 +1,4 @@
-/*	$OpenBSD: tcp_input.c,v 1.405 2024/04/17 20:48:51 bluhm Exp $	*/
+/*	$OpenBSD: tcp_input.c,v 1.407 2024/08/26 13:55:14 bluhm Exp $	*/
 /*	$NetBSD: tcp_input.c,v 1.23 1996/02/13 23:43:44 christos Exp $	*/
 
 /*
@@ -106,11 +106,6 @@ int tcp_flush_queue(struct tcpcb *);
 #ifdef INET6
 #include <netinet6/in6_var.h>
 #include <netinet6/nd6.h>
-
-/* for the packet header length in the mbuf */
-#define M_PH_LEN(m)      (((struct mbuf *)(m))->m_pkthdr.len)
-#define M_V6_LEN(m)      (M_PH_LEN(m) - sizeof(struct ip6_hdr))
-#define M_V4_LEN(m)      (M_PH_LEN(m) - sizeof(struct ip))
 #endif /* INET6 */
 
 int	tcprexmtthresh = 3;
@@ -876,14 +871,15 @@ findpcb:
 	/*
 	 * Process options.
 	 */
+	if (optp
 #ifdef TCP_SIGNATURE
-	if (optp || (tp->t_flags & TF_SIGNATURE))
-#else
-	if (optp)
+	    || (tp->t_flags & TF_SIGNATURE)
 #endif
+	    ) {
 		if (tcp_dooptions(tp, optp, optlen, th, m, iphlen, &opti,
 		    m->m_pkthdr.ph_rtableid, now))
 			goto drop;
+	}
 
 	if (opti.ts_present && opti.ts_ecr) {
 		int32_t rtt_test;
@@ -2129,7 +2125,7 @@ tcp_dooptions(struct tcpcb *tp, u_char *cp, int cnt, struct tcphdr *th,
 #ifdef TCP_SIGNATURE
 	caddr_t sigp = NULL;
 	struct tdb *tdb = NULL;
-#endif /* TCP_SIGNATURE */
+#endif
 
 	for (; cp && cnt > 0; cnt -= optlen, cp += optlen) {
 		opt = cp[0];
@@ -2294,7 +2290,7 @@ tcp_dooptions(struct tcpcb *tp, u_char *cp, int cnt, struct tcphdr *th,
 #ifdef TCP_SIGNATURE
  bad:
 	tdb_unref(tdb);
-#endif /* TCP_SIGNATURE */
+#endif
 	return (-1);
 }
 
@@ -3788,11 +3784,11 @@ syn_cache_add(struct sockaddr *src, struct sockaddr *dst, struct tcphdr *th,
 		win = TCP_MAXWIN;
 
 	bzero(&tb, sizeof(tb));
+	if (optp
 #ifdef TCP_SIGNATURE
-	if (optp || (tp->t_flags & TF_SIGNATURE)) {
-#else
-	if (optp) {
+	    || (tp->t_flags & TF_SIGNATURE)
 #endif
+	    ) {
 		tb.pf = tp->pf;
 		tb.sack_enable = tp->sack_enable;
 		tb.t_flags = tcp_do_rfc1323 ? (TF_REQ_SCALE|TF_REQ_TSTMP) : 0;

@@ -1,4 +1,4 @@
-/*	$OpenBSD: crypto_internal.h,v 1.10 2024/04/17 14:43:37 jsing Exp $ */
+/*	$OpenBSD: crypto_internal.h,v 1.13 2024/10/17 14:27:57 jsing Exp $ */
 /*
  * Copyright (c) 2023 Joel Sing <jsing@openbsd.org>
  *
@@ -19,6 +19,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+
+#include "crypto_arch.h"
 
 #ifndef HEADER_CRYPTO_INTERNAL_H
 #define HEADER_CRYPTO_INTERNAL_H
@@ -217,5 +219,9 @@ crypto_ror_u64(uint64_t v, size_t shift)
 	return (v << (64 - shift)) | (v >> shift);
 }
 #endif
+
+void crypto_cpu_caps_init(void);
+
+uint64_t crypto_cpu_caps_ia32(void);
 
 #endif

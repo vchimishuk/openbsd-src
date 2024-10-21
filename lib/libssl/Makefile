@@ -1,4 +1,4 @@
-# $OpenBSD: Makefile,v 1.81 2023/11/22 15:55:28 tb Exp $
+# $OpenBSD: Makefile,v 1.85 2024/08/11 13:04:46 jsing Exp $
 
 .include <bsd.own.mk>
 .ifndef NOMAN
@@ -16,13 +16,15 @@ CFLAGS+= -Wall -Wundef
 CFLAGS+= -Werror -Wshadow
 .endif
 CFLAGS+= -DLIBRESSL_INTERNAL
-.ifdef NAMESPACE
+
 CFLAGS+= -DLIBRESSL_NAMESPACE
-.endif
+
 .ifdef TLS1_3_DEBUG
 CFLAGS+= -DTLS13_DEBUG
 .endif
 CFLAGS+= -I${.CURDIR}
+CFLAGS+= -I${.CURDIR}/../libcrypto
+CFLAGS+= -I${.CURDIR}/../libcrypto/arch/${MACHINE_CPU}
 CFLAGS+= -I${.CURDIR}/../libcrypto/hidden
 CFLAGS+= -I${.CURDIR}/../libcrypto/bio
 CFLAGS+= -I${.CURDIR}/hidden
@@ -88,7 +90,7 @@ SRCS= \
 	tls_key_share.c \
 	tls_lib.c
 
-HDRS=	dtls1.h srtp.h ssl.h ssl2.h ssl23.h ssl3.h tls1.h
+HDRS=	dtls1.h srtp.h ssl.h ssl3.h tls1.h
 
 .PATH:	${.CURDIR}
 

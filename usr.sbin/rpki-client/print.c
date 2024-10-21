@@ -1,4 +1,4 @@
-/*	$OpenBSD: print.c,v 1.52 2024/02/26 10:02:37 job Exp $ */
+/*	$OpenBSD: print.c,v 1.56 2024/09/12 10:33:25 tb Exp $ */
 /*
  * Copyright (c) 2021 Claudio Jeker <claudio@openbsd.org>
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
@@ -63,6 +63,25 @@ nid2str(int nid)
 	snprintf(buf, sizeof(buf), "nid %d (%s)", nid, name);
 
 	return buf;
+}
+
+const char *
+purpose2str(enum cert_purpose purpose)
+{
+	switch (purpose) {
+	case CERT_PURPOSE_INVALID:
+		return "invalid cert";
+	case CERT_PURPOSE_TA:
+		return "TA cert";
+	case CERT_PURPOSE_CA:
+		return "CA cert";
+	case CERT_PURPOSE_EE:
+		return "EE cert";
+	case CERT_PURPOSE_BGPSEC_ROUTER:
+		return "BGPsec Router cert";
+	default:
+		return "unknown certificate purpose";
+	}
 }
 
 char *
@@ -140,7 +159,8 @@ x509_print(const X509 *x)
 		goto out;
 	}
 
-	if ((serial = x509_convert_seqnum(__func__, xserial)) == NULL)
+	if ((serial = x509_convert_seqnum(__func__, "serial number",
+	    xserial)) == NULL)
 		goto out;
 
 	if (outformats & FORMAT_JSON) {
@@ -210,7 +230,6 @@ ip_resources_print(struct cert_ip *ips, size_t ipsz, size_t asz)
 	char buf1[64], buf2[64];
 	size_t i;
 	int sockt;
-
 
 	for (i = 0; i < ipsz; i++) {
 		if (outformats & FORMAT_JSON)
@@ -324,6 +343,36 @@ cert_print(const struct cert *p)
 		json_do_end();
 }
 
+static char *
+crl_parse_number(const X509_CRL *x509_crl)
+{
+	ASN1_INTEGER	*aint = NULL;
+	int		 crit;
+	char		*s = NULL;
+
+	aint = X509_CRL_get_ext_d2i(x509_crl, NID_crl_number, &crit, NULL);
+	if (aint == NULL) {
+		if (crit != -1)
+			warnx("%s: RFC 6487, section 5: "
+			    "failed to parse CRL number", __func__);
+		else
+			warnx("%s: RFC 6487, section 5: missing CRL number",
+			    __func__);
+		goto out;
+	}
+	if (crit != 0) {
+		warnx("%s: RFC 6487, section 5: CRL number not non-critical",
+		    __func__);
+		goto out;
+	}
+
+	s = x509_convert_seqnum(__func__, "CRL Number", aint);
+
+ out:
+	ASN1_INTEGER_free(aint);
+	return s;
+}
+
 void
 crl_print(const struct crl *p)
 {
@@ -342,13 +391,20 @@ crl_print(const struct crl *p)
 
 	xissuer = X509_CRL_get_issuer(p->x509_crl);
 	issuer = X509_NAME_oneline(xissuer, NULL, 0);
-	if (issuer != NULL && p->number != NULL) {
-		if (outformats & FORMAT_JSON) {
-			json_do_string("crl_issuer", issuer);
-			json_do_string("crl_serial", p->number);
-		} else {
-			printf("CRL issuer:               %s\n", issuer);
-			printf("CRL serial number:        %s\n", p->number);
+	if (issuer != NULL) {
+		char *number;
+
+		if ((number = crl_parse_number(p->x509_crl)) != NULL) {
+			if (outformats & FORMAT_JSON) {
+				json_do_string("crl_issuer", issuer);
+				json_do_string("crl_serial", number);
+			} else {
+				printf("CRL issuer:               %s\n",
+				    issuer);
+				printf("CRL serial number:        %s\n",
+				    number);
+			}
+			free(number);
 		}
 	}
 	free(issuer);
@@ -368,7 +424,7 @@ crl_print(const struct crl *p)
 	revlist = X509_CRL_get_REVOKED(p->x509_crl);
 	for (i = 0; i < sk_X509_REVOKED_num(revlist); i++) {
 		rev = sk_X509_REVOKED_value(revlist, i);
-		serial = x509_convert_seqnum(__func__,
+		serial = x509_convert_seqnum(__func__, "serial number",
 		    X509_REVOKED_get0_serialNumber(rev));
 		x509_get_time(X509_REVOKED_get0_revocationDate(rev), &t);
 		if (serial != NULL) {

@@ -1,4 +1,4 @@
-/* $OpenBSD: input.c,v 1.224 2024/04/10 07:36:25 nicm Exp $ */
+/* $OpenBSD: input.c,v 1.230 2024/10/14 20:26:45 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -109,10 +109,11 @@ struct input_ctx {
 	int			utf8started;
 
 	int			ch;
-	int			last;
+	struct utf8_data	last;
 
 	int			flags;
 #define INPUT_DISCARD 0x1
+#define INPUT_LAST 0x2
 
 	const struct input_state *state;
 
@@ -867,8 +868,6 @@ input_reset(struct input_ctx *ictx, int clear)
 
 	input_clear(ictx);
 
-	ictx->last = -1;
-
 	ictx->state = &input_state_ground;
 	ictx->flags = 0;
 }
@@ -1146,10 +1145,11 @@ input_print(struct input_ctx *ictx)
 		ictx->cell.cell.attr |= GRID_ATTR_CHARSET;
 	else
 		ictx->cell.cell.attr &= ~GRID_ATTR_CHARSET;
-
 	utf8_set(&ictx->cell.cell.data, ictx->ch);
 	screen_write_collect_add(sctx, &ictx->cell.cell);
-	ictx->last = ictx->ch;
+
+	utf8_copy(&ictx->last, &ictx->cell.cell.data);
+	ictx->flags |= INPUT_LAST;
 
 	ictx->cell.cell.attr &= ~GRID_ATTR_CHARSET;
 
@@ -1261,7 +1261,7 @@ input_c0_dispatch(struct input_ctx *ictx)
 		break;
 	}
 
-	ictx->last = -1;
+	ictx->flags &= ~INPUT_LAST;
 	return (0);
 }
 
@@ -1337,7 +1337,7 @@ input_esc_dispatch(struct input_ctx *ictx)
 		break;
 	}
 
-	ictx->last = -1;
+	ictx->flags &= ~INPUT_LAST;
 	return (0);
 }
 
@@ -1348,7 +1348,7 @@ input_csi_dispatch(struct input_ctx *ictx)
 	struct screen_write_ctx	       *sctx = &ictx->ctx;
 	struct screen		       *s = sctx->s;
 	struct input_table_entry       *entry;
-	int				i, n, m;
+	int				i, n, m, ek, set;
 	u_int				cx, bg = ictx->cell.cell.bg;
 
 	if (ictx->flags & INPUT_DISCARD)
@@ -1406,18 +1406,36 @@ input_csi_dispatch(struct input_ctx *ictx)
 		break;
 	case INPUT_CSI_MODSET:
 		n = input_get(ictx, 0, 0, 0);
-		m = input_get(ictx, 1, 0, 0);
-		if (options_get_number(global_options, "extended-keys") == 2)
+		if (n != 4)
 			break;
-		if (n == 0 || (n == 4 && m == 0))
-			screen_write_mode_clear(sctx, MODE_KEXTENDED);
-		else if (n == 4 && (m == 1 || m == 2))
-			screen_write_mode_set(sctx, MODE_KEXTENDED);
+		m = input_get(ictx, 1, 0, 0);
+
+		/*
+		 * Set the extended key reporting mode as per the client
+		 * request, unless "extended-keys" is set to "off".
+		 */
+		ek = options_get_number(global_options, "extended-keys");
+		if (ek == 0)
+			break;
+		screen_write_mode_clear(sctx, EXTENDED_KEY_MODES);
+		if (m == 2)
+			screen_write_mode_set(sctx, MODE_KEYS_EXTENDED_2);
+		else if (m == 1 || ek == 2)
+			screen_write_mode_set(sctx, MODE_KEYS_EXTENDED);
 		break;
 	case INPUT_CSI_MODOFF:
 		n = input_get(ictx, 0, 0, 0);
-		if (n == 4)
-			screen_write_mode_clear(sctx, MODE_KEXTENDED);
+		if (n != 4)
+			break;
+
+		/*
+		 * Clear the extended key reporting mode as per the client
+		 * request, unless "extended-keys always" forces into mode 1.
+		 */
+		screen_write_mode_clear(sctx,
+		    MODE_KEYS_EXTENDED|MODE_KEYS_EXTENDED_2);
+		if (options_get_number(global_options, "extended-keys") == 2)
+			screen_write_mode_set(sctx, MODE_KEYS_EXTENDED);
 		break;
 	case INPUT_CSI_WINOPS:
 		input_csi_dispatch_winops(ictx);
@@ -1570,12 +1588,17 @@ input_csi_dispatch(struct input_ctx *ictx)
 		if (n > m)
 			n = m;
 
-		if (ictx->last == -1)
+		if (~ictx->flags & INPUT_LAST)
 			break;
-		ictx->ch = ictx->last;
 
+		set = ictx->cell.set == 0 ? ictx->cell.g0set : ictx->cell.g1set;
+		if (set == 1)
+			ictx->cell.cell.attr |= GRID_ATTR_CHARSET;
+		else
+			ictx->cell.cell.attr &= ~GRID_ATTR_CHARSET;
+		utf8_copy(&ictx->cell.cell.data, &ictx->last);
 		for (i = 0; i < n; i++)
-			input_print(ictx);
+			screen_write_collect_add(sctx, &ictx->cell.cell);
 		break;
 	case INPUT_CSI_RCP:
 		input_restore_state(ictx);
@@ -1645,7 +1668,7 @@ input_csi_dispatch(struct input_ctx *ictx)
 
 	}
 
-	ictx->last = -1;
+	ictx->flags &= ~INPUT_LAST;
 	return (0);
 }
 
@@ -2266,7 +2289,7 @@ input_enter_dcs(struct input_ctx *ictx)
 
 	input_clear(ictx);
 	input_start_timer(ictx);
-	ictx->last = -1;
+	ictx->flags &= ~INPUT_LAST;
 }
 
 /* DCS terminator (ST) received. */
@@ -2310,7 +2333,7 @@ input_enter_osc(struct input_ctx *ictx)
 
 	input_clear(ictx);
 	input_start_timer(ictx);
-	ictx->last = -1;
+	ictx->flags &= ~INPUT_LAST;
 }
 
 /* OSC terminator (ST) received. */
@@ -2405,7 +2428,7 @@ input_enter_apc(struct input_ctx *ictx)
 
 	input_clear(ictx);
 	input_start_timer(ictx);
-	ictx->last = -1;
+	ictx->flags &= ~INPUT_LAST;
 }
 
 /* APC terminator (ST) received. */
@@ -2434,7 +2457,7 @@ input_enter_rename(struct input_ctx *ictx)
 
 	input_clear(ictx);
 	input_start_timer(ictx);
-	ictx->last = -1;
+	ictx->flags &= ~INPUT_LAST;
 }
 
 /* Rename terminator (ST) received. */
@@ -2478,7 +2501,7 @@ input_top_bit_set(struct input_ctx *ictx)
 	struct screen_write_ctx	*sctx = &ictx->ctx;
 	struct utf8_data	*ud = &ictx->utf8data;
 
-	ictx->last = -1;
+	ictx->flags &= ~INPUT_LAST;
 
 	if (!ictx->utf8started) {
 		if (utf8_open(ud, ictx->ch) != UTF8_MORE)
@@ -2503,6 +2526,9 @@ input_top_bit_set(struct input_ctx *ictx)
 
 	utf8_copy(&ictx->cell.cell.data, ud);
 	screen_write_collect_add(sctx, &ictx->cell.cell);
+
+	utf8_copy(&ictx->last, &ictx->cell.cell.data);
+	ictx->flags |= INPUT_LAST;
 
 	return (0);
 }
@@ -2652,6 +2678,44 @@ input_get_bg_client(struct window_pane *wp)
 	return (-1);
 }
 
+/*
+ * If any control mode client exists that has provided a bg color, return it.
+ * Otherwise, return -1.
+ */
+static int
+input_get_bg_control_client(struct window_pane *wp)
+{
+	struct client	*c;
+
+	if (wp->control_bg == -1)
+		return (-1);
+
+	TAILQ_FOREACH(c, &clients, entry) {
+		if (c->flags & CLIENT_CONTROL)
+			return (wp->control_bg);
+	}
+	return (-1);
+}
+
+/*
+ * If any control mode client exists that has provided a fg color, return it.
+ * Otherwise, return -1.
+ */
+static int
+input_get_fg_control_client(struct window_pane *wp)
+{
+	struct client	*c;
+
+	if (wp->control_fg == -1)
+		return (-1);
+
+	TAILQ_FOREACH(c, &clients, entry) {
+		if (c->flags & CLIENT_CONTROL)
+			return (wp->control_fg);
+	}
+	return (-1);
+}
+
 /* Handle the OSC 10 sequence for setting and querying foreground colour. */
 static void
 input_osc_10(struct input_ctx *ictx, const char *p)
@@ -2663,11 +2727,14 @@ input_osc_10(struct input_ctx *ictx, const char *p)
 	if (strcmp(p, "?") == 0) {
 		if (wp == NULL)
 			return;
-		tty_default_colours(&defaults, wp);
-		if (COLOUR_DEFAULT(defaults.fg))
-			c = input_get_fg_client(wp);
-		else
-			c = defaults.fg;
+		c = input_get_fg_control_client(wp);
+		if (c == -1) {
+			tty_default_colours(&defaults, wp);
+			if (COLOUR_DEFAULT(defaults.fg))
+				c = input_get_fg_client(wp);
+			else
+				c = defaults.fg;
+		}
 		input_osc_colour_reply(ictx, 10, c);
 		return;
 	}
@@ -2711,11 +2778,14 @@ input_osc_11(struct input_ctx *ictx, const char *p)
 	if (strcmp(p, "?") == 0) {
 		if (wp == NULL)
 			return;
-		tty_default_colours(&defaults, wp);
-		if (COLOUR_DEFAULT(defaults.bg))
-			c = input_get_bg_client(wp);
-		else
-			c = defaults.bg;
+		c = input_get_bg_control_client(wp);
+		if (c == -1) {
+			tty_default_colours(&defaults, wp);
+			if (COLOUR_DEFAULT(defaults.bg))
+				c = input_get_bg_client(wp);
+			else
+				c = defaults.bg;
+		}
 		input_osc_colour_reply(ictx, 11, c);
 		return;
 	}

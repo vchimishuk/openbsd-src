@@ -1,4 +1,4 @@
-/*	$OpenBSD: viornd.c,v 1.8 2024/05/24 10:05:55 jsg Exp $	*/
+/*	$OpenBSD: viornd.c,v 1.11 2024/08/27 18:44:12 sf Exp $	*/
 
 /*
  * Copyright (c) 2014 Stefan Fritsch <sf@sfritsch.de>
@@ -69,11 +69,11 @@ struct cfdriver viornd_cd = {
 	NULL, "viornd", DV_DULL
 };
 
-
-int viornd_match(struct device *parent, void *match, void *aux)
+int
+viornd_match(struct device *parent, void *match, void *aux)
 {
-	struct virtio_softc *va = aux;
-	if (va->sc_childdevid == PCI_PRODUCT_VIRTIO_ENTROPY)
+	struct virtio_attach_args *va = aux;
+	if (va->va_devid == PCI_PRODUCT_VIRTIO_ENTROPY)
 		return 1;
 	return 0;
 }
@@ -125,8 +125,7 @@ viornd_attach(struct device *parent, struct device *self, void *aux)
 		goto err2;
 	}
 
-	if (virtio_alloc_vq(vsc, &sc->sc_vq, 0, VIORND_BUFSIZE, 1,
-	    "Entropy request") != 0) {
+	if (virtio_alloc_vq(vsc, &sc->sc_vq, 0, 1, "Entropy request") != 0) {
 		printf(": Can't alloc virtqueue\n");
 		goto err2;
 	}

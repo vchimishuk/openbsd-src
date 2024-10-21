@@ -1,4 +1,4 @@
-/* $OpenBSD: tmux.h,v 1.1217 2024/05/19 03:27:58 jsg Exp $ */
+/* $OpenBSD: tmux.h,v 1.1234 2024/10/07 08:50:47 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -78,6 +78,9 @@ struct winlink;
 #ifndef TMUX_SOCK
 #define TMUX_SOCK "$TMUX_TMPDIR:" _PATH_TMP
 #endif
+#ifndef TMUX_SOCK_PERM
+#define TMUX_SOCK_PERM (7 /* o+rwx */)
+#endif
 #ifndef TMUX_TERM
 #define TMUX_TERM "screen"
 #endif
@@ -125,6 +128,7 @@ struct winlink;
  */
 #define KEYC_BASE            0x0000000010e000ULL
 #define KEYC_USER            0x0000000010f000ULL
+#define KEYC_USER_END	     (KEYC_USER + KEYC_NUSER)
 
 /* Key modifier bits. */
 #define KEYC_META            0x00100000000000ULL
@@ -138,8 +142,7 @@ struct winlink;
 #define KEYC_IMPLIED_META    0x08000000000000ULL
 #define KEYC_BUILD_MODIFIERS 0x10000000000000ULL
 #define KEYC_VI		     0x20000000000000ULL
-#define KEYC_EXTENDED	     0x40000000000000ULL
-#define KEYC_SENT	     0x80000000000000ULL
+#define KEYC_SENT	     0x40000000000000ULL
 
 /* Masks for key bits. */
 #define KEYC_MASK_MODIFIERS  0x00f00000000000ULL
@@ -160,7 +163,7 @@ struct winlink;
 	 (((key) & KEYC_MASK_KEY) < KEYC_BASE || \
 	  ((key) & KEYC_MASK_KEY) >= KEYC_BASE_END) && \
 	 (((key) & KEYC_MASK_KEY) < KEYC_USER || \
-	  ((key) & KEYC_MASK_KEY) >= KEYC_USER + KEYC_NUSER))
+	  ((key) & KEYC_MASK_KEY) >= KEYC_USER_END))
 
 /* Multiple click timeout. */
 #define KEYC_CLICK_TIMEOUT 300
@@ -186,6 +189,42 @@ struct winlink;
  * KEYC_BASE and KEYC_BASE_END.
  */
 typedef unsigned long long key_code;
+
+/* C0 control characters */
+enum {
+	C0_NUL,
+	C0_SOH,
+	C0_STX,
+	C0_ETX,
+	C0_EOT,
+	C0_ENQ,
+	C0_ASC,
+	C0_BEL,
+	C0_BS,
+	C0_HT,
+	C0_LF,
+	C0_VT,
+	C0_FF,
+	C0_CR,
+	C0_SO,
+	C0_SI,
+	C0_DLE,
+	C0_DC1,
+	C0_DC2,
+	C0_DC3,
+	C0_DC4,
+	C0_NAK,
+	C0_SYN,
+	C0_ETB,
+	C0_CAN,
+	C0_EM,
+	C0_SUB,
+	C0_ESC,
+	C0_FS,
+	C0_GS,
+	C0_RS,
+	C0_US
+};
 
 /* Special key codes. */
 enum {
@@ -582,14 +621,16 @@ enum tty_code_code {
 #define MODE_MOUSE_ALL 0x1000
 #define MODE_ORIGIN 0x2000
 #define MODE_CRLF 0x4000
-#define MODE_KEXTENDED 0x8000
+#define MODE_KEYS_EXTENDED 0x8000
 #define MODE_CURSOR_VERY_VISIBLE 0x10000
 #define MODE_CURSOR_BLINKING_SET 0x20000
+#define MODE_KEYS_EXTENDED_2 0x40000
 
 #define ALL_MODES 0xffffff
 #define ALL_MOUSE_MODES (MODE_MOUSE_STANDARD|MODE_MOUSE_BUTTON|MODE_MOUSE_ALL)
 #define MOTION_MOUSE_MODES (MODE_MOUSE_BUTTON|MODE_MOUSE_ALL)
 #define CURSOR_MODES (MODE_CURSOR|MODE_CURSOR_BLINKING|MODE_CURSOR_VERY_VISIBLE)
+#define EXTENDED_KEY_MODES (MODE_KEYS_EXTENDED|MODE_KEYS_EXTENDED_2)
 
 /* Mouse protocol constants. */
 #define MOUSE_PARAM_MAX 0xff
@@ -928,6 +969,11 @@ enum pane_lines {
 #define PANE_BORDER_ARROWS 2
 #define PANE_BORDER_BOTH 3
 
+/* Mode returned by window_pane_mode function. */
+#define WINDOW_PANE_NO_MODE 0
+#define WINDOW_PANE_COPY_MODE 1
+#define WINDOW_PANE_VIEW_MODE 2
+
 /* Screen redraw context. */
 struct screen_redraw_ctx {
 	struct client	*c;
@@ -1100,6 +1146,9 @@ struct window_pane {
 	int		 border_gc_set;
 	struct grid_cell border_gc;
 
+	int		 control_bg;
+	int		 control_fg;
+
 	TAILQ_ENTRY(window_pane) entry;  /* link in list of all panes */
 	TAILQ_ENTRY(window_pane) sentry; /* link in list of last visited */
 	RB_ENTRY(window_pane) tree_entry;
@@ -1265,8 +1314,7 @@ struct session {
 
 	struct options	*options;
 
-#define SESSION_PASTING 0x1
-#define SESSION_ALERTED 0x2
+#define SESSION_ALERTED 0x1
 	int		 flags;
 
 	u_int		 attached;
@@ -1344,8 +1392,11 @@ struct mouse_event {
 
 /* Key event. */
 struct key_event {
-	key_code		key;
-	struct mouse_event	m;
+	key_code		 key;
+	struct mouse_event	 m;
+
+	char			*buf;
+	size_t			 len;
 };
 
 /* Terminal definition. */
@@ -1428,6 +1479,7 @@ struct tty {
 #define TTY_HAVEXDA 0x200
 #define TTY_SYNCING 0x400
 #define TTY_HAVEDA2 0x800 /* Secondary DA. */
+#define TTY_WINSIZEQUERY 0x1000
 #define TTY_ALL_REQUEST_FLAGS \
 	(TTY_HAVEDA|TTY_HAVEDA2|TTY_HAVEXDA)
 	int		 flags;
@@ -1759,6 +1811,7 @@ struct client {
 
 	struct timeval		 creation_time;
 	struct timeval		 activity_time;
+	struct timeval	 	 last_activity_time;
 
 	struct environ		*environ;
 	struct format_job_tree	*jobs;
@@ -1825,6 +1878,7 @@ struct client {
 #define CLIENT_WINDOWSIZECHANGED 0x400000000ULL
 #define CLIENT_CLIPBOARDBUFFER 0x800000000ULL
 #define CLIENT_BRACKETPASTING 0x1000000000ULL
+#define CLIENT_ASSUMEPASTING 0x2000000000ULL
 #define CLIENT_ALLREDRAWFLAGS		\
 	(CLIENT_REDRAWWINDOW|		\
 	 CLIENT_REDRAWSTATUS|		\
@@ -1855,6 +1909,7 @@ struct client {
 	char			*exit_message;
 
 	struct key_table	*keytable;
+	key_code		 last_key;
 
 	uint64_t		 redraw_panes;
 
@@ -1881,6 +1936,7 @@ struct client {
 #define PROMPT_INCREMENTAL 0x4
 #define PROMPT_NOFORMAT 0x8
 #define PROMPT_KEY 0x10
+#define PROMPT_ACCEPT 0x20
 	int			 prompt_flags;
 	enum prompt_type	 prompt_type;
 	int			 prompt_cursor;
@@ -1936,6 +1992,7 @@ RB_HEAD(key_bindings, key_binding);
 
 struct key_table {
 	const char		*name;
+	struct timeval		 activity_time;
 	struct key_bindings	 key_bindings;
 	struct key_bindings	 default_key_bindings;
 
@@ -2260,6 +2317,7 @@ typedef void (*job_free_cb) (void *);
 #define JOB_NOWAIT 0x1
 #define JOB_KEEPWRITE 0x2
 #define JOB_PTY 0x4
+#define JOB_DEFAULTSHELL 0x8
 struct job	*job_run(const char *, int, char **, struct environ *,
 		     struct session *, const char *, job_update_cb,
 		     job_complete_cb, job_free_cb, void *, int, int, int);
@@ -2322,6 +2380,7 @@ void	tty_cell(struct tty *, const struct grid_cell *,
 int	tty_init(struct tty *, struct client *);
 void	tty_resize(struct tty *);
 void	tty_set_size(struct tty *, u_int, u_int, u_int, u_int);
+void	tty_invalidate(struct tty *);
 void	tty_start_tty(struct tty *);
 void	tty_send_requests(struct tty *);
 void	tty_repeat_requests(struct tty *);
@@ -2407,6 +2466,8 @@ const struct utf8_data *tty_acs_rounded_borders(int);
 void		tty_keys_build(struct tty *);
 void		tty_keys_free(struct tty *);
 int		tty_keys_next(struct tty *);
+int		tty_keys_colours(struct tty *, const char *, size_t, size_t *,
+		     int *, int *);
 
 /* arguments.c */
 void		 args_set(struct args *, u_char, struct args_value *, int);
@@ -2655,10 +2716,12 @@ void	 server_clear_marked(void);
 int	 server_is_marked(struct session *, struct winlink *,
 	     struct window_pane *);
 int	 server_check_marked(void);
-int	 server_start(struct tmuxproc *, int, struct event_base *, int, char *);
+int	 server_start(struct tmuxproc *, uint64_t, struct event_base *, int,
+	     char *);
 void	 server_update_socket(void);
 void	 server_add_accept(int);
 void printflike(1, 2) server_add_message(const char *, ...);
+int	 server_create_socket(uint64_t, char **);
 
 /* server-client.c */
 RB_PROTOTYPE(client_windows, client_window, entry, server_client_window_cmp);
@@ -2956,6 +3019,7 @@ void	 screen_reinit(struct screen *);
 void	 screen_free(struct screen *);
 void	 screen_reset_tabs(struct screen *);
 void	 screen_reset_hyperlinks(struct screen *);
+void	 screen_set_default_cursor(struct screen *, struct options *);
 void	 screen_set_cursor_style(u_int, enum screen_cursor_style *, int *);
 void	 screen_set_cursor_colour(struct screen *, int);
 int	 screen_set_title(struct screen *, const char *);
@@ -3043,6 +3107,7 @@ void		 window_pane_reset_mode_all(struct window_pane *);
 int		 window_pane_key(struct window_pane *, struct client *,
 		     struct session *, struct winlink *, key_code,
 		     struct mouse_event *);
+void		 window_pane_paste(struct window_pane *, char *, size_t);
 int		 window_pane_visible(struct window_pane *);
 int		 window_pane_exited(struct window_pane *);
 u_int		 window_pane_search(struct window_pane *, const char *, int,
@@ -3069,6 +3134,7 @@ void		 window_pane_update_used_data(struct window_pane *,
 		     struct window_pane_offset *, size_t);
 void		 window_set_fill_character(struct window *);
 void		 window_pane_default_cursor(struct window_pane *);
+int		 window_pane_mode(struct window_pane *);
 
 /* layout.c */
 u_int		 layout_count_cells(struct layout_cell *);
@@ -3133,7 +3199,7 @@ int	 mode_tree_set_current(struct mode_tree_data *, uint64_t);
 void	 mode_tree_each_tagged(struct mode_tree_data *, mode_tree_each_cb,
 	     struct client *, key_code, int);
 void	 mode_tree_up(struct mode_tree_data *, int);
-void	 mode_tree_down(struct mode_tree_data *, int);
+int	 mode_tree_down(struct mode_tree_data *, int);
 struct mode_tree_data *mode_tree_start(struct window_pane *, struct args *,
 	     mode_tree_build_cb, mode_tree_draw_cb, mode_tree_search_cb,
 	     mode_tree_menu_cb, mode_tree_height_cb, mode_tree_key_cb, void *,
@@ -3175,6 +3241,7 @@ void printflike(3, 4) window_copy_add(struct window_pane *, int, const char *,
 void printflike(3, 0) window_copy_vadd(struct window_pane *, int, const char *,
 		     va_list);
 void		 window_copy_pageup(struct window_pane *, int);
+void		 window_copy_pagedown(struct window_pane *, int, int);
 void		 window_copy_start_drag(struct client *, struct mouse_event *);
 char		*window_copy_get_word(struct window_pane *, u_int, u_int);
 char		*window_copy_get_line(struct window_pane *, u_int);
@@ -3262,6 +3329,7 @@ void		 session_renumber_windows(struct session *);
 
 /* utf8.c */
 enum utf8_state	 utf8_towc (const struct utf8_data *, wchar_t *);
+enum utf8_state	 utf8_fromwc(wchar_t wc, struct utf8_data *);
 int		 utf8_in_table(wchar_t, const wchar_t *, u_int);
 utf8_char	 utf8_build_one(u_char);
 enum utf8_state	 utf8_from_data(const struct utf8_data *, utf8_char *);
@@ -3381,6 +3449,7 @@ u_int	 		 hyperlinks_put(struct hyperlinks *, const char *,
 int			 hyperlinks_get(struct hyperlinks *, u_int,
 			     const char **, const char **, const char **);
 struct hyperlinks	*hyperlinks_init(void);
+struct hyperlinks	*hyperlinks_copy(struct hyperlinks *);
 void			 hyperlinks_reset(struct hyperlinks *);
 void			 hyperlinks_free(struct hyperlinks *);
 

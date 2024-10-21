@@ -1,4 +1,4 @@
-/*	$OpenBSD: filemode.c,v 1.42 2024/05/20 15:51:43 claudio Exp $ */
+/*	$OpenBSD: filemode.c,v 1.49 2024/08/20 13:31:49 claudio Exp $ */
 /*
  * Copyright (c) 2019 Claudio Jeker <claudio@openbsd.org>
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
@@ -157,7 +157,8 @@ parse_load_cert(char *uri)
 	if (cert == NULL)
 		goto done;
 	if (cert->purpose != CERT_PURPOSE_CA) {
-		warnx("AIA reference to bgpsec cert %s", uri);
+		warnx("AIA reference to %s in %s",
+		    purpose2str(cert->purpose), uri);
 		goto done;
 	}
 	/* try to load the CRL of this cert */
@@ -190,6 +191,10 @@ parse_load_certchain(char *uri)
 	for (i = 0; i < MAX_CERT_DEPTH; i++) {
 		if ((cert = uripath_lookup(uri)) != NULL) {
 			a = auth_find(&auths, cert->certid);
+			if (a == NULL) {
+				warnx("failed to find issuer for %s", uri);
+				goto fail;
+			}
 			break;
 		}
 		filestack[i] = uri;
@@ -222,7 +227,7 @@ parse_load_certchain(char *uri)
 		cert->talid = a->cert->talid;
 		a = auth_insert(uri, &auths, cert, a);
 		uripath_add(uri, cert);
-		stack[i] = NULL;
+		stack[i - 1] = NULL;
 	}
 
 	return a;
@@ -308,7 +313,7 @@ print_signature_path(const char *crl, const char *aia, const struct auth *a)
 {
 	if (crl != NULL)
 		printf("Signature path:           %s\n", crl);
-	if (a->cert->mft != NULL)
+	if (a != NULL && a->cert != NULL && a->cert->mft != NULL)
 		printf("                          %s\n", a->cert->mft);
 	if (aia != NULL)
 		printf("                          %s\n", aia);
@@ -347,7 +352,7 @@ proc_parser_file(char *file, unsigned char *buf, size_t len)
 	char *aia = NULL;
 	char *crl_uri = NULL;
 	time_t *expires = NULL, *notafter = NULL;
-	struct auth *a;
+	struct auth *a = NULL;
 	struct crl *c;
 	const char *errstr = NULL, *valid;
 	int status = 0;
@@ -403,7 +408,7 @@ proc_parser_file(char *file, unsigned char *buf, size_t len)
 		cert = cert_parse_pre(file, buf, len);
 		if (cert == NULL)
 			break;
-		is_ta = X509_get_extension_flags(cert->x509) & EXFLAG_SS;
+		is_ta = (cert->purpose == CERT_PURPOSE_TA);
 		if (!is_ta)
 			cert = cert_parse(file, cert);
 		if (cert == NULL)
@@ -526,9 +531,15 @@ proc_parser_file(char *file, unsigned char *buf, size_t len)
 			constraints_validate(file, cert);
 		}
 	} else if (is_ta) {
+		expires = NULL;
+		notafter = NULL;
 		if ((tal = find_tal(cert)) != NULL) {
 			cert = ta_parse(file, cert, tal->pkey, tal->pkeysz);
 			status = (cert != NULL);
+			if (status) {
+				expires = &cert->expires;
+				notafter = &cert->notafter;
+			}
 			if (outformats & FORMAT_JSON)
 				json_do_string("tal", tal->descr);
 			else
@@ -538,7 +549,6 @@ proc_parser_file(char *file, unsigned char *buf, size_t len)
 		} else {
 			cert_free(cert);
 			cert = NULL;
-			expires = NULL;
 			status = 0;
 		}
 	}
@@ -602,7 +612,7 @@ proc_parser_file(char *file, unsigned char *buf, size_t len)
 	else {
 		printf("\n");
 
-		if (status && aia != NULL) {
+		if (aia != NULL && status) {
 			print_signature_path(crl_uri, aia, a);
 			if (expires != NULL)
 				printf("Signature path expires:   %s\n",
@@ -721,7 +731,7 @@ proc_filemode(int fd)
 
 	for (;;) {
 		pfd.events = POLLIN;
-		if (msgq.queued)
+		if (msgbuf_queuelen(&msgq) > 0)
 			pfd.events |= POLLOUT;
 
 		if (poll(&pfd, 1, INFTIM) == -1) {

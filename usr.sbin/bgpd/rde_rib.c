@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde_rib.c,v 1.261 2023/10/16 10:25:46 claudio Exp $ */
+/*	$OpenBSD: rde_rib.c,v 1.263 2024/08/14 19:09:51 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Claudio Jeker <claudio@openbsd.org>
@@ -801,10 +801,10 @@ path_put(struct rde_aspath *asp)
 static int	prefix_add(struct bgpd_addr *, int, struct rib *,
 		    struct rde_peer *, uint32_t, uint32_t, struct rde_aspath *,
 		    struct rde_community *, struct nexthop *,
-		    uint8_t, uint8_t);
+		    uint8_t, uint8_t, int);
 static int	prefix_move(struct prefix *, struct rde_peer *,
 		    struct rde_aspath *, struct rde_community *,
-		    struct nexthop *, uint8_t, uint8_t);
+		    struct nexthop *, uint8_t, uint8_t, int);
 
 static void	prefix_link(struct prefix *, struct rib_entry *,
 		    struct pt_entry *, struct rde_peer *, uint32_t, uint32_t,
@@ -967,8 +967,8 @@ prefix_adjout_match(struct rde_peer *peer, struct bgpd_addr *addr)
  */
 int
 prefix_update(struct rib *rib, struct rde_peer *peer, uint32_t path_id,
-    uint32_t path_id_tx, struct filterstate *state, struct bgpd_addr *prefix,
-    int prefixlen)
+    uint32_t path_id_tx, struct filterstate *state, int filtered,
+    struct bgpd_addr *prefix, int prefixlen)
 {
 	struct rde_aspath	*asp, *nasp = &state->aspath;
 	struct rde_community	*comm, *ncomm = &state->communities;
@@ -987,6 +987,10 @@ prefix_update(struct rib *rib, struct rde_peer *peer, uint32_t path_id,
 			/* no change, update last change */
 			p->lastchange = getmonotime();
 			p->validation_state = state->vstate;
+			if (filtered)
+				p->flags |= PREFIX_FLAG_FILTERED;
+			else
+				p->flags &= ~PREFIX_FLAG_FILTERED;
 			return (0);
 		}
 	}
@@ -1010,11 +1014,11 @@ prefix_update(struct rib *rib, struct rde_peer *peer, uint32_t path_id,
 	/* If the prefix was found move it else add it to the RIB. */
 	if (p != NULL)
 		return (prefix_move(p, peer, asp, comm, state->nexthop,
-		    state->nhflags, state->vstate));
+		    state->nhflags, state->vstate, filtered));
 	else
 		return (prefix_add(prefix, prefixlen, rib, peer, path_id,
 		    path_id_tx, asp, comm, state->nexthop, state->nhflags,
-		    state->vstate));
+		    state->vstate, filtered));
 }
 
 /*
@@ -1024,7 +1028,7 @@ static int
 prefix_add(struct bgpd_addr *prefix, int prefixlen, struct rib *rib,
     struct rde_peer *peer, uint32_t path_id, uint32_t path_id_tx,
     struct rde_aspath *asp, struct rde_community *comm,
-    struct nexthop *nexthop, uint8_t nhflags, uint8_t vstate)
+    struct nexthop *nexthop, uint8_t nhflags, uint8_t vstate, int filtered)
 {
 	struct pt_entry	*pte;
 	struct prefix		*p;
@@ -1041,6 +1045,9 @@ prefix_add(struct bgpd_addr *prefix, int prefixlen, struct rib *rib,
 	prefix_link(p, re, re->prefix, peer, path_id, path_id_tx, asp, comm,
 	    nexthop, nhflags, vstate);
 
+	if (filtered)
+		p->flags |= PREFIX_FLAG_FILTERED;
+
 	/* add possible pftable reference form aspath */
 	if (asp && asp->pftableid)
 		rde_pftable_add(asp->pftableid, p);
@@ -1055,7 +1062,7 @@ prefix_add(struct bgpd_addr *prefix, int prefixlen, struct rib *rib,
 static int
 prefix_move(struct prefix *p, struct rde_peer *peer,
     struct rde_aspath *asp, struct rde_community *comm,
-    struct nexthop *nexthop, uint8_t nhflags, uint8_t vstate)
+    struct nexthop *nexthop, uint8_t nhflags, uint8_t vstate, int filtered)
 {
 	struct prefix		*np;
 
@@ -1069,6 +1076,9 @@ prefix_move(struct prefix *p, struct rde_peer *peer,
 	np = prefix_alloc();
 	prefix_link(np, prefix_re(p), p->pt, peer, p->path_id, p->path_id_tx,
 	    asp, comm, nexthop, nhflags, vstate);
+
+	if (filtered)
+		np->flags |= PREFIX_FLAG_FILTERED;
 
 	/* add possible pftable reference from new aspath */
 	if (asp && asp->pftableid)
@@ -1644,7 +1654,10 @@ TAILQ_HEAD(nexthop_queue, nexthop)	nexthop_runners =
 
 RB_HEAD(nexthop_tree, nexthop)		nexthoptable =
 					    RB_INITIALIZER(&nexthoptree);
-RB_GENERATE_STATIC(nexthop_tree, nexthop, entry, nexthop_compare);
+
+static inline int nexthop_cmp(struct nexthop *, struct nexthop *);
+
+RB_GENERATE_STATIC(nexthop_tree, nexthop, entry, nexthop_cmp);
 
 void
 nexthop_shutdown(void)
@@ -1834,7 +1847,7 @@ nexthop_get(struct bgpd_addr *nexthop)
 	if (nh == NULL) {
 		nh = calloc(1, sizeof(*nh));
 		if (nh == NULL)
-			fatal("nexthop_alloc");
+			fatal("nexthop_get");
 		rdemem.nexthop_cnt++;
 
 		LIST_INIT(&nh->prefix_h);
@@ -1882,8 +1895,8 @@ nexthop_unref(struct nexthop *nh)
 	return (1);
 }
 
-int
-nexthop_compare(struct nexthop *na, struct nexthop *nb)
+static inline int
+nexthop_cmp(struct nexthop *na, struct nexthop *nb)
 {
 	struct bgpd_addr	*a, *b;
 

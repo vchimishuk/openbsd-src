@@ -1,4 +1,4 @@
-/*	$OpenBSD: pf.c,v 1.1196 2024/05/14 08:26:13 jsg Exp $ */
+/*	$OpenBSD: pf.c,v 1.1205 2024/09/04 07:54:52 mglocker Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -3666,8 +3666,8 @@ pf_anchor_stack_top(void)
 }
 
 int
-pf_anchor_stack_push(struct pf_ruleset *rs, struct pf_rule *r,
-    struct pf_anchor *child, int jump_target)
+pf_anchor_stack_push(struct pf_ruleset *rs, struct pf_rule *anchor,
+    struct pf_rule *r, struct pf_anchor *child, int jump_target)
 {
 	struct pf_anchor_stackframe *stack;
 	struct pf_anchor_stackframe *top_sf = pf_anchor_stack_top();
@@ -3677,6 +3677,7 @@ pf_anchor_stack_push(struct pf_ruleset *rs, struct pf_rule *r,
 		return (-1);
 
 	top_sf->sf_rs = rs;
+	top_sf->sf_anchor = anchor;
 	top_sf->sf_r = r;
 	top_sf->sf_child = child;
 	top_sf->sf_jump_target = jump_target;
@@ -3693,8 +3694,8 @@ pf_anchor_stack_push(struct pf_ruleset *rs, struct pf_rule *r,
 }
 
 int
-pf_anchor_stack_pop(struct pf_ruleset **rs, struct pf_rule **r,
-    struct pf_anchor **child, int *jump_target)
+pf_anchor_stack_pop(struct pf_ruleset **rs, struct pf_rule **anchor,
+    struct pf_rule **r, struct pf_anchor **child, int *jump_target)
 {
 	struct pf_anchor_stackframe *top_sf = pf_anchor_stack_top();
 	struct pf_anchor_stackframe *stack;
@@ -3710,6 +3711,7 @@ pf_anchor_stack_pop(struct pf_ruleset **rs, struct pf_rule **r,
 			    __func__);
 
 		*rs = top_sf->sf_rs;
+		*anchor = top_sf->sf_anchor;
 		*r = top_sf->sf_r;
 		*child = top_sf->sf_child;
 		*jump_target = top_sf->sf_jump_target;
@@ -4306,25 +4308,27 @@ enter_ruleset:
 			if (r->quick)
 				return (PF_TEST_QUICK);
 		} else {
-			ctx->a = r;
 			ctx->aruleset = &r->anchor->ruleset;
 			if (r->anchor_wildcard) {
 				RB_FOREACH(child, pf_anchor_node,
 				    &r->anchor->children) {
-					if (pf_anchor_stack_push(ruleset, r,
-					    child, PF_NEXT_CHILD) != 0)
+					if (pf_anchor_stack_push(ruleset,
+					    ctx->a, r, child,
+					    PF_NEXT_CHILD) != 0)
 						return (PF_TEST_FAIL);
 
+					ctx->a = r;
 					ruleset = &child->ruleset;
 					goto enter_ruleset;
 next_child:
 					continue;	/* with RB_FOREACH() */
 				}
 			} else {
-				if (pf_anchor_stack_push(ruleset, r, child,
-				    PF_NEXT_RULE) != 0)
+				if (pf_anchor_stack_push(ruleset, ctx->a,
+				    r, child, PF_NEXT_RULE) != 0)
 					return (PF_TEST_FAIL);
 
+				ctx->a = r;
 				ruleset = &r->anchor->ruleset;
 				child = NULL;
 				goto enter_ruleset;
@@ -4335,7 +4339,9 @@ next_rule:
 		r = TAILQ_NEXT(r, entries);
 	}
 
-	if (pf_anchor_stack_pop(&ruleset, &r, &child, &target) == 0) {
+	if (pf_anchor_stack_pop(&ruleset, &ctx->a, &r, &child,
+	    &target) == 0) {
+
 		/* stop if any rule matched within quick anchors. */
 		if (r->quick == PF_TEST_QUICK && *ctx->am == r)
 			return (PF_TEST_QUICK);
@@ -5002,7 +5008,7 @@ pf_tcp_track_full(struct pf_pdesc *pd, struct pf_state **stp, u_short *reason,
 	 * (Selective ACK). We could optionally validate the SACK values
 	 * against the current ACK window, either forwards or backwards, but
 	 * I'm not confident that SACK has been implemented properly
-	 * everywhere. It wouldn't surprise me if several stacks accidently
+	 * everywhere. It wouldn't surprise me if several stacks accidentally
 	 * SACK too far backwards of previously ACKed data. There really aren't
 	 * any security implications of bad SACKing unless the target stack
 	 * doesn't validate the option length correctly. Someone trying to
@@ -7952,37 +7958,55 @@ done:
 	case PF_AFRT:
 		if (pf_translate_af(&pd)) {
 			action = PF_DROP;
-			break;
+			goto out;
 		}
 		pd.m->m_pkthdr.pf.flags |= PF_TAG_GENERATED;
 		switch (pd.naf) {
 		case AF_INET:
 			if (pd.dir == PF_IN) {
-				if (ipforwarding == 0) {
+				int flags = IP_REDIRECT;
+
+				switch (atomic_load_int(&ip_forwarding)) {
+				case 2:
+					SET(flags, IP_FORWARDING_IPSEC);
+					/* FALLTHROUGH */
+				case 1:
+					SET(flags, IP_FORWARDING);
+					break;
+				default:
 					ipstat_inc(ips_cantforward);
 					action = PF_DROP;
-					break;
+					goto out;
 				}
-				ip_forward(pd.m, ifp, NULL, 1);
+				if (atomic_load_int(&ip_directedbcast))
+					SET(flags, IP_ALLOWBROADCAST);
+				ip_forward(pd.m, ifp, NULL, flags);
 			} else
 				ip_output(pd.m, NULL, NULL, 0, NULL, NULL, 0);
 			break;
 		case AF_INET6:
 			if (pd.dir == PF_IN) {
-				if (ip6_forwarding == 0) {
+				int flags = IPV6_REDIRECT;
+
+				switch (atomic_load_int(&ip6_forwarding)) {
+				case 2:
+					SET(flags, IPV6_FORWARDING_IPSEC);
+					/* FALLTHROUGH */
+				case 1:
+					SET(flags, IPV6_FORWARDING);
+					break;
+				default:
 					ip6stat_inc(ip6s_cantforward);
 					action = PF_DROP;
-					break;
+					goto out;
 				}
-				ip6_forward(pd.m, NULL, 1);
+				ip6_forward(pd.m, NULL, flags);
 			} else
 				ip6_output(pd.m, NULL, NULL, 0, NULL, NULL);
 			break;
 		}
-		if (action != PF_DROP) {
-			pd.m = NULL;
-			action = PF_PASS;
-		}
+		pd.m = NULL;
+		action = PF_PASS;
 		break;
 #endif /* INET6 */
 	case PF_DROP:
@@ -8022,6 +8046,7 @@ done:
 			st->if_index_out = ifp->if_index;
 	}
 
+ out:
 	*m0 = pd.m;
 
 	pf_state_unref(st);

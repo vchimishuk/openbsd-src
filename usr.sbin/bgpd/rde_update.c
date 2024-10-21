@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde_update.c,v 1.166 2024/01/23 16:13:35 claudio Exp $ */
+/*	$OpenBSD: rde_update.c,v 1.169 2024/09/25 14:46:51 claudio Exp $ */
 
 /*
  * Copyright (c) 2004 Claudio Jeker <claudio@openbsd.org>
@@ -25,6 +25,7 @@
 #include <stdio.h>
 
 #include "bgpd.h"
+#include "session.h"
 #include "rde.h"
 #include "log.h"
 
@@ -454,16 +455,18 @@ up_generate_default(struct rde_peer *peer, uint8_t aid)
 static struct bgpd_addr *
 up_get_nexthop(struct rde_peer *peer, struct filterstate *state, uint8_t aid)
 {
-	struct bgpd_addr *peer_local;
+	struct bgpd_addr *peer_local = NULL;
 
 	switch (aid) {
 	case AID_INET:
 	case AID_VPN_IPv4:
-		peer_local = &peer->local_v4_addr;
+		if (peer->local_v4_addr.aid == AID_INET)
+			peer_local = &peer->local_v4_addr;
 		break;
 	case AID_INET6:
 	case AID_VPN_IPv6:
-		peer_local = &peer->local_v6_addr;
+		if (peer->local_v6_addr.aid == AID_INET6)
+			peer_local = &peer->local_v6_addr;
 		break;
 	case AID_FLOWSPECv4:
 	case AID_FLOWSPECv6:
@@ -613,6 +616,8 @@ up_generate_attr(struct ibuf *buf, struct rde_peer *peer,
 		case ATTR_NEXTHOP:
 			switch (aid) {
 			case AID_INET:
+				if (nh == NULL)
+					return -1;
 				if (attr_writebuf(buf, ATTR_WELL_KNOWN,
 				    ATTR_NEXTHOP, &nh->exit_nexthop.v4,
 				    sizeof(nh->exit_nexthop.v4)) == -1)
@@ -889,6 +894,8 @@ up_generate_mp_reach(struct ibuf *buf, struct rde_peer *peer,
 
 	switch (aid) {
 	case AID_INET6:
+		if (nh == NULL)
+			return -1;
 		/* NH LEN */
 		if (ibuf_add_n8(buf, sizeof(struct in6_addr)) == -1)
 			return -1;
@@ -898,6 +905,8 @@ up_generate_mp_reach(struct ibuf *buf, struct rde_peer *peer,
 			return -1;
 		break;
 	case AID_VPN_IPv4:
+		if (nh == NULL)
+			return -1;
 		/* NH LEN */
 		if (ibuf_add_n8(buf,
 		    sizeof(uint64_t) + sizeof(struct in_addr)) == -1)
@@ -911,6 +920,8 @@ up_generate_mp_reach(struct ibuf *buf, struct rde_peer *peer,
 			return -1;
 		break;
 	case AID_VPN_IPv6:
+		if (nh == NULL)
+			return -1;
 		/* NH LEN */
 		if (ibuf_add_n8(buf,
 		    sizeof(uint64_t) + sizeof(struct in6_addr)) == -1)
@@ -938,7 +949,7 @@ up_generate_mp_reach(struct ibuf *buf, struct rde_peer *peer,
 
 	if (up_dump_prefix(buf, &peer->updates[aid], peer, 0) == -1)
 		/* no prefixes written, fail update  */
-		return (-1);
+		return -1;
 
 	/* update MP_REACH attribute length field */
 	len = ibuf_size(buf) - off - sizeof(len);
@@ -973,61 +984,144 @@ up_generate_mp_reach(struct ibuf *buf, struct rde_peer *peer,
  * how may routes can be added. Return 0 on success -1 on error which
  * includes generating an empty withdraw message.
  */
-int
-up_dump_withdraws(struct ibuf *buf, struct rde_peer *peer, uint8_t aid)
+struct ibuf *
+up_dump_withdraws(struct rde_peer *peer, uint8_t aid)
 {
+	struct ibuf *buf;
 	size_t off;
 	uint16_t afi, len;
 	uint8_t safi;
 
+	if ((buf = ibuf_dynamic(4, 4096 - MSGSIZE_HEADER)) == NULL)
+		goto fail;
+
 	/* reserve space for the withdrawn routes length field */
 	off = ibuf_size(buf);
 	if (ibuf_add_zero(buf, sizeof(len)) == -1)
-		return -1;
+		goto fail;
 
 	if (aid != AID_INET) {
 		/* reserve space for 2-byte path attribute length */
 		off = ibuf_size(buf);
 		if (ibuf_add_zero(buf, sizeof(len)) == -1)
-			return -1;
+			goto fail;
 
 		/* attribute header, defaulting to extended length one */
 		if (ibuf_add_n8(buf, ATTR_OPTIONAL | ATTR_EXTLEN) == -1)
-			return -1;
+			goto fail;
 		if (ibuf_add_n8(buf, ATTR_MP_UNREACH_NLRI) == -1)
-			return -1;
+			goto fail;
 		if (ibuf_add_zero(buf, sizeof(len)) == -1)
-			return -1;
+			goto fail;
 
 		/* afi & safi */
 		if (aid2afi(aid, &afi, &safi))
-			fatalx("up_dump_mp_unreach: bad AID");
+			fatalx("%s: bad AID", __func__);
 		if (ibuf_add_n16(buf, afi) == -1)
-			return -1;
+			goto fail;
 		if (ibuf_add_n8(buf, safi) == -1)
-			return -1;
+			goto fail;
 	}
 
 	if (up_dump_prefix(buf, &peer->withdraws[aid], peer, 1) == -1)
-		return -1;
+		goto fail;
 
 	/* update length field (either withdrawn routes or attribute length) */
 	len = ibuf_size(buf) - off - sizeof(len);
 	if (ibuf_set_n16(buf, off, len) == -1)
-		return -1;
+		goto fail;
 
 	if (aid != AID_INET) {
 		/* write MP_UNREACH_NLRI attribute length (always extended) */
 		len -= 4; /* skip attribute header */
 		if (ibuf_set_n16(buf, off + sizeof(len) + 2, len) == -1)
-			return -1;
+			goto fail;
 	} else {
 		/* no extra attributes so set attribute len to 0 */
-		if (ibuf_add_zero(buf, sizeof(len)) == -1)
-			return -1;
+		if (ibuf_add_zero(buf, sizeof(len)) == -1) {
+			goto fail;
+		}
 	}
 
-	return 0;
+	return buf;
+
+ fail:
+	/* something went horribly wrong */
+	log_peer_warn(&peer->conf, "generating withdraw failed, peer desynced");
+	ibuf_free(buf);
+	return NULL;
+}
+
+/*
+ * Withdraw a single prefix after an error.
+ */
+static struct ibuf *
+up_dump_withdraw_one(struct rde_peer *peer, struct prefix *p, struct ibuf *buf)
+{
+	size_t off;
+	int has_ap;
+	uint16_t afi, len;
+	uint8_t safi;
+
+	/* reset the buffer and start fresh */
+	ibuf_truncate(buf, 0);
+
+	/* reserve space for the withdrawn routes length field */
+	off = ibuf_size(buf);
+	if (ibuf_add_zero(buf, sizeof(len)) == -1)
+		goto fail;
+
+	if (p->pt->aid != AID_INET) {
+		/* reserve space for 2-byte path attribute length */
+		off = ibuf_size(buf);
+		if (ibuf_add_zero(buf, sizeof(len)) == -1)
+			goto fail;
+
+		/* attribute header, defaulting to extended length one */
+		if (ibuf_add_n8(buf, ATTR_OPTIONAL | ATTR_EXTLEN) == -1)
+			goto fail;
+		if (ibuf_add_n8(buf, ATTR_MP_UNREACH_NLRI) == -1)
+			goto fail;
+		if (ibuf_add_zero(buf, sizeof(len)) == -1)
+			goto fail;
+
+		/* afi & safi */
+		if (aid2afi(p->pt->aid, &afi, &safi))
+			fatalx("%s: bad AID", __func__);
+		if (ibuf_add_n16(buf, afi) == -1)
+			goto fail;
+		if (ibuf_add_n8(buf, safi) == -1)
+			goto fail;
+	}
+
+	has_ap = peer_has_add_path(peer, p->pt->aid, CAPA_AP_SEND);
+	if (pt_writebuf(buf, p->pt, 1, has_ap, p->path_id_tx) == -1)
+		goto fail;
+
+	/* update length field (either withdrawn routes or attribute length) */
+	len = ibuf_size(buf) - off - sizeof(len);
+	if (ibuf_set_n16(buf, off, len) == -1)
+		goto fail;
+
+	if (p->pt->aid != AID_INET) {
+		/* write MP_UNREACH_NLRI attribute length (always extended) */
+		len -= 4; /* skip attribute header */
+		if (ibuf_set_n16(buf, off + sizeof(len) + 2, len) == -1)
+			goto fail;
+	} else {
+		/* no extra attributes so set attribute len to 0 */
+		if (ibuf_add_zero(buf, sizeof(len)) == -1) {
+			goto fail;
+		}
+	}
+
+	return buf;
+
+ fail:
+	/* something went horribly wrong */
+	log_peer_warn(&peer->conf, "generating withdraw failed, peer desynced");
+	ibuf_free(buf);
+	return NULL;
 }
 
 /*
@@ -1036,9 +1130,10 @@ up_dump_withdraws(struct ibuf *buf, struct rde_peer *peer, uint8_t aid)
  * and then tries to add as many prefixes using these attributes.
  * Return 0 on success -1 on error which includes producing an empty message.
  */
-int
-up_dump_update(struct ibuf *buf, struct rde_peer *peer, uint8_t aid)
+struct ibuf *
+up_dump_update(struct rde_peer *peer, uint8_t aid)
 {
+	struct ibuf *buf;
 	struct bgpd_addr addr;
 	struct prefix *p;
 	size_t off;
@@ -1046,20 +1141,23 @@ up_dump_update(struct ibuf *buf, struct rde_peer *peer, uint8_t aid)
 
 	p = RB_MIN(prefix_tree, &peer->updates[aid]);
 	if (p == NULL)
-		return -1;
+		return NULL;
+
+	if ((buf = ibuf_dynamic(4, 4096 - MSGSIZE_HEADER)) == NULL)
+		goto fail;
 
 	/* withdrawn routes length field is 0 */
 	if (ibuf_add_zero(buf, sizeof(len)) == -1)
-		return -1;
+		goto fail;
 
 	/* reserve space for 2-byte path attribute length */
 	off = ibuf_size(buf);
 	if (ibuf_add_zero(buf, sizeof(len)) == -1)
-		return -1;
+		goto fail;
 
 	if (up_generate_attr(buf, peer, prefix_aspath(p),
 	    prefix_communities(p), prefix_nexthop(p), aid) == -1)
-		goto fail;
+		goto drop;
 
 	if (aid != AID_INET) {
 		/* write mp attribute including nlri */
@@ -1072,29 +1170,35 @@ up_dump_update(struct ibuf *buf, struct rde_peer *peer, uint8_t aid)
 		 */
 		if (up_generate_mp_reach(buf, peer, prefix_nexthop(p), aid) ==
 		    -1)
-			goto fail;
+			goto drop;
 	}
 
 	/* update attribute length field */
 	len = ibuf_size(buf) - off - sizeof(len);
 	if (ibuf_set_n16(buf, off, len) == -1)
-		return -1;
+		goto fail;
 
 	if (aid == AID_INET) {
 		/* last but not least dump the IPv4 nlri */
 		if (up_dump_prefix(buf, &peer->updates[aid], peer, 0) == -1)
-			goto fail;
+			goto drop;
 	}
 
-	return 0;
+	return buf;
 
-fail:
-	/* Not enough space. Drop prefix, it will never fit. */
+ drop:
+	/* Not enough space. Drop current prefix, it will never fit. */
+	p = RB_MIN(prefix_tree, &peer->updates[aid]);
 	pt_getaddr(p->pt, &addr);
-	log_peer_warnx(&peer->conf, "path attributes to large, "
+	log_peer_warnx(&peer->conf, "generating update failed, "
 	    "prefix %s/%d dropped", log_addr(&addr), p->pt->prefixlen);
 
-	up_prefix_free(&peer->updates[AID_INET], p, peer, 0);
-	/* XXX should probably send a withdraw for this prefix */
-	return -1;
+	up_prefix_free(&peer->updates[aid], p, peer, 0);
+	return up_dump_withdraw_one(peer, p, buf);
+
+ fail:
+	/* something went horribly wrong */
+	log_peer_warn(&peer->conf, "generating update failed, peer desynced");
+	ibuf_free(buf);
+	return NULL;
 }

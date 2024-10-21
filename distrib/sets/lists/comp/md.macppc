@@ -1,8 +1,5 @@
-./usr/bin/addr2line
 ./usr/bin/as
 ./usr/bin/gdb
-./usr/bin/readelf
-./usr/include/ieeefp.h
 ./usr/include/macppc
 ./usr/include/macppc/_float.h
 ./usr/include/macppc/_types.h
@@ -16,6 +13,7 @@
 ./usr/include/macppc/cpu.h
 ./usr/include/macppc/db_machdep.h
 ./usr/include/macppc/disklabel.h
+./usr/include/macppc/elf.h
 ./usr/include/macppc/endian.h
 ./usr/include/macppc/exec.h
 ./usr/include/macppc/fenv.h
@@ -60,6 +58,7 @@
 ./usr/include/powerpc/cdefs.h
 ./usr/include/powerpc/cpu.h
 ./usr/include/powerpc/db_machdep.h
+./usr/include/powerpc/elf.h
 ./usr/include/powerpc/endian.h
 ./usr/include/powerpc/exec.h
 ./usr/include/powerpc/fenv.h
@@ -90,7 +89,6 @@
 ./usr/include/powerpc/spinlock.h
 ./usr/include/powerpc/tcb.h
 ./usr/include/powerpc/trap.h
-./usr/libdata/ldscripts
 ./usr/libdata/ldscripts/elf32ppc_obsd.x
 ./usr/libdata/ldscripts/elf32ppc_obsd.xbn
 ./usr/libdata/ldscripts/elf32ppc_obsd.xc
@@ -109,7 +107,6 @@
 ./usr/libdata/ldscripts/elf32ppc_obsd.xz
 ./usr/share/info/annotate.info
 ./usr/share/info/as.info
-./usr/share/info/bfd.info
 ./usr/share/info/gdb.info
 ./usr/share/info/gdbint.info
 ./usr/share/info/ld.info

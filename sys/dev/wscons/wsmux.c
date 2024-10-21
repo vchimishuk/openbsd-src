@@ -1,4 +1,4 @@
-/*	$OpenBSD: wsmux.c,v 1.57 2024/03/25 13:01:49 mvs Exp $	*/
+/*	$OpenBSD: wsmux.c,v 1.59 2024/08/16 12:22:17 miod Exp $	*/
 /*      $NetBSD: wsmux.c,v 1.37 2005/04/30 03:47:12 augustss Exp $      */
 
 /*
@@ -143,7 +143,7 @@ wsmux_getmux(int n)
 	struct wsmux_softc **new, **old;
 	int i;
 
-	if (n >= WSMUX_MAXDEV)
+	if (n < 0 || n >= WSMUX_MAXDEV)
 		return (NULL);
 
 	/* Make sure there is room for mux n in the table */
@@ -216,7 +216,7 @@ wsmuxopen(dev_t dev, int flags, int mode, struct proc *p)
 
 	error = wsmux_do_open(sc, evar);
 	if (error)
-                wsevent_fini(evar);
+		wsevent_fini(evar);
 	return (error);
 }
 

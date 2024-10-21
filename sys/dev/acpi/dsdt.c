@@ -1,4 +1,4 @@
-/* $OpenBSD: dsdt.c,v 1.268 2024/05/14 08:26:13 jsg Exp $ */
+/* $OpenBSD: dsdt.c,v 1.271 2024/09/20 02:00:46 jsg Exp $ */
 /*
  * Copyright (c) 2005 Jordan Hargrave <jordan@openbsd.org>
  *
@@ -28,6 +28,7 @@
 #include <machine/db_machdep.h>
 #endif
 
+#include <dev/acpi/acpidev.h>
 #include <dev/acpi/acpireg.h>
 #include <dev/acpi/acpivar.h>
 #include <dev/acpi/amltypes.h>
@@ -251,7 +252,8 @@ struct aml_opcode aml_table[] = {
 	{ AMLOP_COPYOBJECT,	"CopyObject",	"tS",	},
 };
 
-int aml_pc(uint8_t *src)
+int
+aml_pc(uint8_t *src)
 {
 	return src - aml_root.start;
 }
@@ -363,7 +365,7 @@ struct aml_notify_data {
 	char			pnpid[20];
 	void			*cbarg;
 	int			(*cbproc)(struct aml_node *, int, void *);
-	int			poll;
+	int			flags;
 
 	SLIST_ENTRY(aml_notify_data) link;
 };
@@ -535,7 +537,7 @@ aml_notify_task(void *node, int notify_value)
 
 void
 aml_register_notify(struct aml_node *node, const char *pnpid,
-    int (*proc)(struct aml_node *, int, void *), void *arg, int poll)
+    int (*proc)(struct aml_node *, int, void *), void *arg, int flags)
 {
 	struct aml_notify_data	*pdata;
 	extern int acpi_poll_enabled;
@@ -547,22 +549,29 @@ aml_register_notify(struct aml_node *node, const char *pnpid,
 	pdata->node = node;
 	pdata->cbarg = arg;
 	pdata->cbproc = proc;
-	pdata->poll = poll;
+	pdata->flags = flags;
 
 	if (pnpid)
 		strlcpy(pdata->pnpid, pnpid, sizeof(pdata->pnpid));
 
 	SLIST_INSERT_HEAD(&aml_notify_list, pdata, link);
 
-	if (poll && !acpi_poll_enabled)
+	if ((flags & ACPIDEV_POLL) && !acpi_poll_enabled)
 		timeout_add_sec(&acpi_softc->sc_dev_timeout, 10);
 }
 
 void
 aml_notify(struct aml_node *node, int notify_value)
 {
+	struct aml_notify_data *pdata;
+
 	if (node == NULL)
 		return;
+
+	SLIST_FOREACH(pdata, &aml_notify_list, link) {
+		if (pdata->node == node && (pdata->flags & ACPIDEV_WAKEUP))
+			acpi_softc->sc_wakeup = 1;
+	}
 
 	dnprintf(10,"queue notify: %s %x\n", aml_nodename(node), notify_value);
 	acpi_addtask(acpi_softc, aml_notify_task, node, notify_value);
@@ -587,7 +596,7 @@ acpi_poll_notify_task(void *arg0, int arg1)
 	struct aml_notify_data	*pdata = NULL;
 
 	SLIST_FOREACH(pdata, &aml_notify_list, link)
-		if (pdata->cbproc && pdata->poll)
+		if (pdata->cbproc && (pdata->flags & ACPIDEV_POLL))
 			pdata->cbproc(pdata->node, 0, pdata->cbarg);
 }
 
@@ -1668,7 +1677,8 @@ aml_foreachpkg(struct aml_value *pkg, int start,
  */
 int aml_fixup_node(struct aml_node *, void *);
 
-int aml_fixup_node(struct aml_node *node, void *arg)
+int
+aml_fixup_node(struct aml_node *node, void *arg)
 {
 	struct aml_value *val = arg;
 	int i;
@@ -1721,7 +1731,7 @@ aml_val_to_string(const struct aml_value *val)
 	default:
 		snprintf(buffer, sizeof(buffer),
 		    "Failed to convert type %d to string!", val->type);
-	};
+	}
 
 	return (buffer);
 }

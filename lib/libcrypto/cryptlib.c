@@ -1,4 +1,4 @@
-/* $OpenBSD: cryptlib.c,v 1.51 2024/04/21 13:41:14 tb Exp $ */
+/* $OpenBSD: cryptlib.c,v 1.57 2024/10/19 13:06:11 jsing Exp $ */
 /* ====================================================================
  * Copyright (c) 1998-2006 The OpenSSL Project.  All rights reserved.
  *
@@ -124,7 +124,13 @@
 #include <openssl/opensslconf.h>
 #include <openssl/crypto.h>
 
+#include "cryptlib.h"
+#include "crypto_internal.h"
 #include "crypto_local.h"
+#include "x86_arch.h"
+
+/* Machine independent capabilities. */
+uint64_t crypto_cpu_caps;
 
 static void (*locking_callback)(int mode, int type,
     const char *file, int line) = NULL;
@@ -281,6 +287,7 @@ struct CRYPTO_dynlock_value *
 {
 	return NULL;
 }
+LCRYPTO_ALIAS(CRYPTO_get_dynlock_create_callback);
 
 void
 (*CRYPTO_get_dynlock_lock_callback(void))(int mode,
@@ -323,49 +330,35 @@ CRYPTO_THREADID_hash(const CRYPTO_THREADID *id)
 	return id->val;
 }
 
-#if	defined(__i386)   || defined(__i386__)   || defined(_M_IX86) || \
-	defined(__INTEL__) || \
-	defined(__x86_64) || defined(__x86_64__) || defined(_M_AMD64) || defined(_M_X64)
-
-uint64_t OPENSSL_ia32cap_P;
-
-uint64_t
-OPENSSL_cpu_caps(void)
-{
-	return OPENSSL_ia32cap_P;
-}
-LCRYPTO_ALIAS(OPENSSL_cpu_caps);
-
-#if defined(OPENSSL_CPUID_OBJ) && !defined(OPENSSL_NO_ASM)
-#define OPENSSL_CPUID_SETUP
-void
-OPENSSL_cpuid_setup(void)
-{
-	static int trigger = 0;
-	uint64_t OPENSSL_ia32_cpuid(void);
-
-	if (trigger)
-		return;
-	trigger = 1;
-	OPENSSL_ia32cap_P = OPENSSL_ia32_cpuid();
-}
-#endif
-
-#else
-uint64_t
-OPENSSL_cpu_caps(void)
-{
-	return 0;
-}
-LCRYPTO_ALIAS(OPENSSL_cpu_caps);
-#endif
-
 #if !defined(OPENSSL_CPUID_SETUP) && !defined(OPENSSL_CPUID_OBJ)
 void
 OPENSSL_cpuid_setup(void)
 {
 }
 #endif
+
+#ifndef HAVE_CRYPTO_CPU_CAPS_INIT
+void
+crypto_cpu_caps_init(void)
+{
+	OPENSSL_cpuid_setup();
+}
+#endif
+
+#ifndef HAVE_CRYPTO_CPU_CAPS_IA32
+uint64_t
+crypto_cpu_caps_ia32(void)
+{
+	return 0;
+}
+#endif
+
+uint64_t
+OPENSSL_cpu_caps(void)
+{
+	return crypto_cpu_caps;
+}
+LCRYPTO_ALIAS(OPENSSL_cpu_caps);
 
 static void
 OPENSSL_showfatal(const char *fmta, ...)

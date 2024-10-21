@@ -1,6 +1,3 @@
-./usr/bin/addr2line
-./usr/bin/readelf
-./usr/include/ieeefp.h
 ./usr/include/powerpc64
 ./usr/include/powerpc64/_float.h
 ./usr/include/powerpc64/_types.h
@@ -14,6 +11,7 @@
 ./usr/include/powerpc64/cpufunc.h
 ./usr/include/powerpc64/db_machdep.h
 ./usr/include/powerpc64/disklabel.h
+./usr/include/powerpc64/elf.h
 ./usr/include/powerpc64/endian.h
 ./usr/include/powerpc64/exec.h
 ./usr/include/powerpc64/fdt.h
@@ -50,5 +48,3 @@
 ./usr/include/powerpc64/timetc.h
 ./usr/include/powerpc64/trap.h
 ./usr/include/powerpc64/vmparam.h
-./usr/libdata/ldscripts
-./usr/share/info/bfd.info

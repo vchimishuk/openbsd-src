@@ -1,4 +1,4 @@
-/*	$OpenBSD: config.c,v 1.109 2024/05/22 08:41:14 claudio Exp $ */
+/*	$OpenBSD: config.c,v 1.112 2024/10/01 11:49:24 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004, 2005 Henning Brauer <henning@openbsd.org>
@@ -87,6 +87,7 @@ copy_config(struct bgpd_config *to, struct bgpd_config *from)
 	to->min_holdtime = from->min_holdtime;
 	to->connectretry = from->connectretry;
 	to->fib_priority = from->fib_priority;
+	to->filtered_in_locrib = from->filtered_in_locrib;
 }
 
 void
@@ -433,22 +434,20 @@ merge_config(struct bgpd_config *xconf, struct bgpd_config *conf)
 	 * merge peers:
 	 * - need to know which peers are new, replaced and removed
 	 * - walk over old peers and check if there is a corresponding new
-	 *   peer if so mark it RECONF_KEEP. Remove all old peers.
-	 * - swap lists (old peer list is actually empty).
+	 *   peer if so mark it RECONF_KEEP. Mark all old peers RECONF_DELETE.
 	 */
 	RB_FOREACH_SAFE(p, peer_head, &xconf->peers, nextp) {
 		np = getpeerbyid(conf, p->conf.id);
 		if (np != NULL) {
 			np->reconf_action = RECONF_KEEP;
-			/* copy the auth state since parent uses it */
-			np->auth = p->auth;
-		} else {
-			/* peer no longer exists, clear pfkey state */
-			pfkey_remove(p);
-		}
+			/* keep the auth state since parent needs it */
+			np->auth_state = p->auth_state;
 
-		RB_REMOVE(peer_head, &xconf->peers, p);
-		free(p);
+			RB_REMOVE(peer_head, &xconf->peers, p);
+			free(p);
+		} else {
+			p->reconf_action = RECONF_DELETE;
+		}
 	}
 	RB_FOREACH_SAFE(np, peer_head, &conf->peers, nextp) {
 		RB_REMOVE(peer_head, &conf->peers, np);
@@ -458,6 +457,21 @@ merge_config(struct bgpd_config *xconf, struct bgpd_config *conf)
 
 	/* conf is merged so free it */
 	free_config(conf);
+}
+
+void
+free_deleted_peers(struct bgpd_config *conf)
+{
+	struct peer *p, *nextp;
+
+	RB_FOREACH_SAFE(p, peer_head, &conf->peers, nextp) {
+		if (p->reconf_action == RECONF_DELETE) {
+			/* peer no longer exists, clear pfkey state */
+			pfkey_remove(&p->auth_state);
+			RB_REMOVE(peer_head, &conf->peers, p);
+			free(p);
+		}
+	}
 }
 
 uint32_t

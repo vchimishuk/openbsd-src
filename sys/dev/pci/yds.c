@@ -1,4 +1,4 @@
-/*	$OpenBSD: yds.c,v 1.64 2024/05/24 06:02:58 jsg Exp $	*/
+/*	$OpenBSD: yds.c,v 1.66 2024/08/18 14:42:56 deraadt Exp $	*/
 /*	$NetBSD: yds.c,v 1.5 2001/05/21 23:55:04 minoura Exp $	*/
 
 /*
@@ -107,27 +107,36 @@ void YWRITE1(struct yds_softc *sc,bus_size_t r,u_int8_t x);
 void YWRITE2(struct yds_softc *sc,bus_size_t r,u_int16_t x);
 void YWRITE4(struct yds_softc *sc,bus_size_t r,u_int32_t x);
 
-u_int16_t YREAD2(struct yds_softc *sc,bus_size_t r)
+u_int16_t
+YREAD2(struct yds_softc *sc,bus_size_t r)
 {
   DPRINTFN(5, (" YREAD2(0x%lX)\n",(unsigned long)r));
   return bus_space_read_2(sc->memt,sc->memh,r);
 }
-u_int32_t YREAD4(struct yds_softc *sc,bus_size_t r)
+
+u_int32_t
+YREAD4(struct yds_softc *sc,bus_size_t r)
 {
   DPRINTFN(5, (" YREAD4(0x%lX)\n",(unsigned long)r));
   return bus_space_read_4(sc->memt,sc->memh,r);
 }
-void YWRITE1(struct yds_softc *sc,bus_size_t r,u_int8_t x)
+
+void
+YWRITE1(struct yds_softc *sc,bus_size_t r,u_int8_t x)
 {
   DPRINTFN(5, (" YWRITE1(0x%lX,0x%lX)\n",(unsigned long)r,(unsigned long)x));
   bus_space_write_1(sc->memt,sc->memh,r,x);
 }
-void YWRITE2(struct yds_softc *sc,bus_size_t r,u_int16_t x)
+
+void
+YWRITE2(struct yds_softc *sc,bus_size_t r,u_int16_t x)
 {
   DPRINTFN(5, (" YWRITE2(0x%lX,0x%lX)\n",(unsigned long)r,(unsigned long)x));
   bus_space_write_2(sc->memt,sc->memh,r,x);
 }
-void YWRITE4(struct yds_softc *sc,bus_size_t r,u_int32_t x)
+
+void
+YWRITE4(struct yds_softc *sc,bus_size_t r,u_int32_t x)
 {
   DPRINTFN(5, (" YWRITE4(0x%lX,0x%lX)\n",(unsigned long)r,(unsigned long)x));
   bus_space_write_4(sc->memt,sc->memh,r,x);
@@ -1562,11 +1571,11 @@ yds_activate(struct device *self, int act)
 
 	switch (act) {
 	case DVACT_QUIESCE:
+		rv = config_activate_children(self, act);
 		if (sc->sc_play.intr || sc->sc_rec.intr)
 			sc->sc_resume_active = 1;
 		else
 			sc->sc_resume_active = 0;
-		rv = config_activate_children(self, act);
 		if (sc->sc_resume_active)
 			yds_close(sc);
 		break;

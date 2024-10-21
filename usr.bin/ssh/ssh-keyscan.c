@@ -1,4 +1,4 @@
-/* $OpenBSD: ssh-keyscan.c,v 1.157 2024/05/06 19:26:17 tobias Exp $ */
+/* $OpenBSD: ssh-keyscan.c,v 1.164 2024/10/18 05:32:51 djm Exp $ */
 /*
  * Copyright 1995, 1996 by David Mazieres <dm@lcs.mit.edu>.
  *
@@ -75,6 +75,8 @@ int print_sshfp = 0;		/* Print SSHFP records instead of known_hosts */
 int found_one = 0;		/* Successfully found a key */
 
 int hashalg = -1;		/* Hash for SSHFP records or -1 for all */
+
+int quiet = 0;			/* Don't print key comment lines */
 
 #define MAXMAXFD 256
 
@@ -275,6 +277,7 @@ keygrab_ssh2(con *c)
 #endif
 	c->c_ssh->kex->kex[KEX_C25519_SHA256] = kex_gen_client;
 	c->c_ssh->kex->kex[KEX_KEM_SNTRUP761X25519_SHA512] = kex_gen_client;
+	c->c_ssh->kex->kex[KEX_KEM_MLKEM768X25519_SHA256] = kex_gen_client;
 	ssh_set_verify_host_key_callback(c->c_ssh, key_print_wrapper);
 	/*
 	 * do the key-exchange until an error occurs or until
@@ -516,8 +519,10 @@ congreet(int s)
 		confree(s);
 		return;
 	}
-	fprintf(stderr, "%c %s:%d %s\n", print_sshfp ? ';' : '#',
-	    c->c_name, ssh_port, chop(buf));
+	if (!quiet) {
+		fprintf(stdout, "%c %s:%d %s\n", print_sshfp ? ';' : '#',
+		    c->c_name, ssh_port, chop(buf));
+	}
 	keygrab_ssh2(c);
 	confree(s);
 }
@@ -557,7 +562,7 @@ conloop(void)
 	for (i = 0; i < maxfd; i++) {
 		if (read_wait[i].revents & (POLLHUP|POLLERR|POLLNVAL))
 			confree(i);
-		else if (read_wait[i].revents & (POLLIN|POLLHUP))
+		else if (read_wait[i].revents & (POLLIN))
 			conread(i);
 	}
 
@@ -619,27 +624,15 @@ do_host(char *host)
 			if (addr_cmp(&addr, &end_addr) == 0)
 				break;
 			addr_increment(&addr);
-		};
+		}
 	}
-}
-
-void
-sshfatal(const char *file, const char *func, int line, int showfunc,
-    LogLevel level, const char *suffix, const char *fmt, ...)
-{
-	va_list args;
-
-	va_start(args, fmt);
-	sshlogv(file, func, line, showfunc, level, suffix, fmt, args);
-	va_end(args);
-	cleanup_exit(255);
 }
 
 static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: ssh-keyscan [-46cDHv] [-f file] [-O option] [-p port] [-T timeout]\n"
+	    "usage: ssh-keyscan [-46cDHqv] [-f file] [-O option] [-p port] [-T timeout]\n"
 	    "                   [-t type] [host | addrlist namelist]\n");
 	exit(1);
 }
@@ -664,7 +657,7 @@ main(int argc, char **argv)
 	if (argc <= 1)
 		usage();
 
-	while ((opt = getopt(argc, argv, "cDHv46O:p:T:t:f:")) != -1) {
+	while ((opt = getopt(argc, argv, "cDHqv46O:p:T:t:f:")) != -1) {
 		switch (opt) {
 		case 'H':
 			hash_hosts = 1;
@@ -699,6 +692,9 @@ main(int argc, char **argv)
 			else
 				fatal("Too high debugging level.");
 			break;
+		case 'q':
+			quiet = 1;
+			break;
 		case 'f':
 			if (strcmp(optarg, "-") == 0)
 				optarg = NULL;
@@ -716,7 +712,7 @@ main(int argc, char **argv)
 			get_keytypes = 0;
 			tname = strtok(optarg, ",");
 			while (tname) {
-				int type = sshkey_type_from_name(tname);
+				int type = sshkey_type_from_shortname(tname);
 
 				switch (type) {
 #ifdef WITH_DSA

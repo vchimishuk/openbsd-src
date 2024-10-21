@@ -1,10 +1,13 @@
-#	$OpenBSD: Makefile.inc,v 1.92 2024/05/22 15:24:55 naddy Exp $
+#	$OpenBSD: Makefile.inc,v 1.97 2024/10/14 01:57:50 djm Exp $
 
 .include <bsd.own.mk>
 
 CFLAGS+=	-I${.CURDIR}/..
 .if ${MACHINE} != "hppa"
 CFLAGS+=	-fstack-protector-all
+.endif
+.if ${MACHINE} == "amd64"
+CFLAGS+=	-fret-clean
 .endif
 
 CDIAGFLAGS=	-Wall
@@ -26,15 +29,15 @@ CDIAGFLAGS+=	-Wold-style-definition
 CDIAGFLAGS+=	-Werror
 .endif
 
-#CDIAGFLAGS+=	-fno-common
-#DEBUG=-g
-#INSTALL_STRIP=
+CDIAGFLAGS+=	-fno-common
+DEBUG=-g
+INSTALL_STRIP=
 
 WARNINGS=yes
 
 OPENSSL?=	yes
 ZLIB?=		yes
-DSAKEY?=	yes
+DSAKEY?=	no
 
 .if (${OPENSSL:L} == "yes")
 CFLAGS+=	-DWITH_OPENSSL
@@ -77,6 +80,7 @@ SRCS_KEX+=	smult_curve25519_ref.c
 SRCS_KEX+=	kexgen.c
 SRCS_KEX+=	kexsntrup761x25519.c
 SRCS_KEX+=	sntrup761.c
+SRCS_KEX+=	kexmlkem768x25519.c
 
 SRCS_KEY+=	sshkey.c
 SRCS_KEY+=	cipher.c

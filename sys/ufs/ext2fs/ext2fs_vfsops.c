@@ -1,4 +1,4 @@
-/*	$OpenBSD: ext2fs_vfsops.c,v 1.119 2024/05/12 09:19:54 jsg Exp $	*/
+/*	$OpenBSD: ext2fs_vfsops.c,v 1.121 2024/09/04 07:54:53 mglocker Exp $	*/
 /*	$NetBSD: ext2fs_vfsops.c,v 1.1 1997/06/11 09:34:07 bouyer Exp $	*/
 
 /*
@@ -101,10 +101,7 @@ ext2fs_init(struct vfsconf *vfsp)
 
 /*
  * Called by main() when ext2fs is going to be mounted as root.
- *
- * Name is updated by mount(8) after booting.
  */
-#define ROOTNAME	"root_device"
 
 int
 ext2fs_mountroot(void)
@@ -1069,7 +1066,7 @@ ext2fs_cgupdate(struct ufsmount *mp, int waitfor)
 	return (allerror);
 }
 
-/* This is called before the superblock is copied.  Watch out for endianity! */
+/* This is called before the superblock is copied.  Watch out for endianness! */
 static int
 e2fs_sbcheck(struct ext2fs *fs, int ronly)
 {

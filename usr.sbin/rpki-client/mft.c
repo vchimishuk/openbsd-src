@@ -1,4 +1,4 @@
-/*	$OpenBSD: mft.c,v 1.116 2024/05/24 12:57:20 tb Exp $ */
+/*	$OpenBSD: mft.c,v 1.119 2024/09/12 10:33:25 tb Exp $ */
 /*
  * Copyright (c) 2022 Theo Buehler <tb@openbsd.org>
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
@@ -90,7 +90,7 @@ IMPLEMENT_ASN1_FUNCTIONS(Manifest);
 
 /*
  * Determine rtype corresponding to file extension. Returns RTYPE_INVALID
- * on error or unkown extension.
+ * on error or unknown extension.
  */
 enum rtype
 rtype_from_file_extension(const char *fn)
@@ -333,7 +333,8 @@ mft_parse_econtent(const char *fn, struct mft *mft, const unsigned char *d,
 	if (!valid_econtent_version(fn, mft_asn1->version, 0))
 		goto out;
 
-	mft->seqnum = x509_convert_seqnum(fn, mft_asn1->manifestNumber);
+	mft->seqnum = x509_convert_seqnum(fn, "manifest number",
+	    mft_asn1->manifestNumber);
 	if (mft->seqnum == NULL)
 		goto out;
 
@@ -366,9 +367,8 @@ mft_parse_econtent(const char *fn, struct mft *mft, const unsigned char *d,
 
 	if (OBJ_obj2nid(mft_asn1->fileHashAlg) != NID_sha256) {
 		warnx("%s: RFC 6486 section 4.2.1: fileHashAlg: "
-		    "want SHA256 object, have %s (NID %d)", fn,
-		    ASN1_tag2str(OBJ_obj2nid(mft_asn1->fileHashAlg)),
-		    OBJ_obj2nid(mft_asn1->fileHashAlg));
+		    "want SHA256 object, have %s", fn,
+		    nid2str(OBJ_obj2nid(mft_asn1->fileHashAlg)));
 		goto out;
 	}
 

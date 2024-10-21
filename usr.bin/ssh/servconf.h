@@ -1,4 +1,4 @@
-/* $OpenBSD: servconf.h,v 1.163 2024/05/23 23:47:16 jsg Exp $ */
+/* $OpenBSD: servconf.h,v 1.169 2024/10/14 01:57:50 djm Exp $ */
 
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -63,6 +63,23 @@ struct queued_listenaddr {
 struct listenaddr {
 	char *rdomain;
 	struct addrinfo *addrs;
+};
+
+#define PER_SOURCE_PENALTY_OVERFLOW_DENY_ALL	1
+#define PER_SOURCE_PENALTY_OVERFLOW_PERMISSIVE	2
+struct per_source_penalty {
+	int	enabled;
+	int	max_sources4;
+	int	max_sources6;
+	int	overflow_mode;
+	int	overflow_mode6;
+	int	penalty_crash;
+	int	penalty_grace;
+	int	penalty_authfail;
+	int	penalty_noauth;
+	int	penalty_refuseconnection;
+	int	penalty_max;
+	int	penalty_min;
 };
 
 typedef struct {
@@ -172,6 +189,8 @@ typedef struct {
 	int	per_source_max_startups;
 	int	per_source_masklen_ipv4;
 	int	per_source_masklen_ipv6;
+	char	*per_source_penalty_exempt;
+	struct per_source_penalty per_source_penalty;
 	int	max_authtries;
 	int	max_sessions;
 	char   *banner;			/* SSH-2 banner message */
@@ -227,11 +246,15 @@ typedef struct {
 	int	unused_connection_timeout;
 
 	char   *sshd_session_path;
+	char   *sshd_auth_path;
+
+	int	refuse_connection;
 }       ServerOptions;
 
 /* Information about the incoming connection as used by Match */
 struct connection_info {
 	const char *user;
+	int user_invalid;
 	const char *host;	/* possibly resolved hostname */
 	const char *address;	/* remote address */
 	const char *laddress;	/* local address */

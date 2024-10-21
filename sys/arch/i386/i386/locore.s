@@ -1,4 +1,4 @@
-/*	$OpenBSD: locore.s,v 1.204 2023/12/12 07:37:20 deraadt Exp $	*/
+/*	$OpenBSD: locore.s,v 1.206 2024/10/21 07:21:18 jsg Exp $	*/
 /*	$NetBSD: locore.s,v 1.145 1996/05/03 19:41:19 christos Exp $	*/
 
 /*-
@@ -38,22 +38,17 @@
 
 #include "npx.h"
 #include "assym.h"
-#include "apm.h"
 #include "lapic.h"
-#include "ksyms.h"
 
 #include <sys/errno.h>
 #include <sys/syscall.h>
 
 #include <machine/codepatch.h>
-#include <machine/cputypes.h>
 #include <machine/param.h>
 #include <machine/pte.h>
 #include <machine/segments.h>
 #include <machine/specialreg.h>
 #include <machine/trap.h>
-
-#include <dev/isa/isareg.h>
 
 #if NLAPIC > 0
 #include <machine/i82489reg.h>
@@ -555,6 +550,7 @@ ENTRY(_copyin)
 	ret
 
 ENTRY(copy_fault)
+	cld
 	SMAP_CLAC
 	GET_CURPCB(%edx)
 	popl	PCB_ONFAULT(%edx)

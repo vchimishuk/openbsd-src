@@ -1,4 +1,4 @@
-/*	$OpenBSD: sys_process.c,v 1.97 2024/04/02 08:27:22 deraadt Exp $	*/
+/*	$OpenBSD: sys_process.c,v 1.102 2024/10/08 12:02:24 claudio Exp $	*/
 /*	$NetBSD: sys_process.c,v 1.55 1996/05/15 06:17:47 tls Exp $	*/
 
 /*-
@@ -283,16 +283,19 @@ ptrace_ctrl(struct proc *p, int req, pid_t pid, caddr_t addr, int data)
 	struct proc *t;				/* target thread */
 	struct process *tr;			/* target process */
 	int error = 0;
-	int s;
 
 	switch (req) {
 	case PT_TRACE_ME:
 		/* Just set the trace flag. */
 		tr = p->p_p;
-		if (ISSET(tr->ps_flags, PS_TRACED))
+		mtx_enter(&tr->ps_mtx);
+		if (ISSET(tr->ps_flags, PS_TRACED)) {
+			mtx_leave(&tr->ps_mtx);
 			return EBUSY;
+		}
 		atomic_setbits_int(&tr->ps_flags, PS_TRACED);
-		tr->ps_oppid = tr->ps_pptr->ps_pid;
+		tr->ps_opptr = tr->ps_pptr;
+		mtx_leave(&tr->ps_mtx);
 		if (tr->ps_ptstat == NULL)
 			tr->ps_ptstat = malloc(sizeof(*tr->ps_ptstat),
 			    M_SUBPROC, M_WAITOK);
@@ -442,6 +445,13 @@ ptrace_ctrl(struct proc *p, int req, pid_t pid, caddr_t addr, int data)
 
 		if (pid < THREAD_PID_OFFSET && tr->ps_single)
 			t = tr->ps_single;
+		else if (t == tr->ps_single)
+			atomic_setbits_int(&t->p_flag, P_TRACESINGLE);
+		else {
+			error = EINVAL;
+			goto fail;
+		}
+			
 
 		/* If the address parameter is not (int *)1, set the pc. */
 		if ((int *)addr != (int *)1)
@@ -483,8 +493,10 @@ ptrace_ctrl(struct proc *p, int req, pid_t pid, caddr_t addr, int data)
 			goto fail;
 #endif
 
+		mtx_enter(&tr->ps_mtx);
 		process_untrace(tr);
 		atomic_clearbits_int(&tr->ps_flags, PS_WAITED);
+		mtx_leave(&tr->ps_mtx);
 
 	sendsig:
 		memset(tr->ps_ptstat, 0, sizeof(*tr->ps_ptstat));
@@ -492,10 +504,10 @@ ptrace_ctrl(struct proc *p, int req, pid_t pid, caddr_t addr, int data)
 		/* Finally, deliver the requested signal (or none). */
 		if (t->p_stat == SSTOP) {
 			tr->ps_xsig = data;
-			SCHED_LOCK(s);
+			SCHED_LOCK();
 			unsleep(t);
 			setrunnable(t);
-			SCHED_UNLOCK(s);
+			SCHED_UNLOCK();
 		} else {
 			if (data != 0)
 				psignal(t, data);
@@ -520,9 +532,11 @@ ptrace_ctrl(struct proc *p, int req, pid_t pid, caddr_t addr, int data)
 		 *   proc gets to see all the action.
 		 * Stop the target.
 		 */
+		mtx_enter(&tr->ps_mtx);
 		atomic_setbits_int(&tr->ps_flags, PS_TRACED);
-		tr->ps_oppid = tr->ps_pptr->ps_pid;
+		tr->ps_opptr = tr->ps_pptr;
 		process_reparent(tr, p->p_p);
+		mtx_leave(&tr->ps_mtx);
 		if (tr->ps_ptstat == NULL)
 			tr->ps_ptstat = malloc(sizeof(*tr->ps_ptstat),
 			    M_SUBPROC, M_WAITOK);

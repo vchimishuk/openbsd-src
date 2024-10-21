@@ -1,9 +1,11 @@
-# $OpenBSD: Makefile.inc,v 1.27 2024/03/29 11:00:57 jsing Exp $
+# $OpenBSD: Makefile.inc,v 1.30 2024/10/18 13:36:24 jsing Exp $
 
 # amd64-specific libcrypto build rules
 
 # all amd64 code generators use this
 EXTRA_PL =	${LCRYPTO_SRC}/perlasm/x86_64-xlate.pl
+
+SRCS += crypto_cpu_caps.c
 
 # aes
 CFLAGS+= -DAES_ASM
@@ -13,11 +15,6 @@ SSLASM+= aes bsaes-x86_64
 CFLAGS+= -DVPAES_ASM
 SSLASM+= aes vpaes-x86_64
 SSLASM+= aes aesni-x86_64
-CFLAGS+= -DHAVE_AES_CBC_ENCRYPT_INTERNAL
-CFLAGS+= -DHAVE_AES_SET_ENCRYPT_KEY_INTERNAL
-CFLAGS+= -DHAVE_AES_SET_DECRYPT_KEY_INTERNAL
-CFLAGS+= -DHAVE_AES_ENCRYPT_INTERNAL
-CFLAGS+= -DHAVE_AES_DECRYPT_INTERNAL
 # bn
 CFLAGS+= -DOPENSSL_IA32_SSE2
 CFLAGS+= -DRSA_ASM
@@ -48,8 +45,6 @@ SSLASM+= md5 md5-x86_64
 CFLAGS+= -DGHASH_ASM
 SSLASM+= modes ghash-x86_64
 # rc4
-CFLAGS+= -DHAVE_RC4_INTERNAL
-CFLAGS+= -DHAVE_RC4_SET_KEY_INTERNAL
 SSLASM+= rc4 rc4-x86_64
 # ripemd
 # sha
@@ -76,10 +71,4 @@ ${f}.S: ${LCRYPTO_SRC}/${dir}/asm/${f}.pl ${EXTRA_PL}
 		/usr/bin/perl ./asm/${f}.pl openbsd) > ${.TARGET}
 .endfor
 
-CFLAGS+= -DOPENSSL_CPUID_OBJ
-SRCS+=	x86_64cpuid.S
-GENERATED+=x86_64cpuid.S
-
-x86_64cpuid.S: ${LCRYPTO_SRC}/x86_64cpuid.pl ${EXTRA_PL}
-	(cd ${LCRYPTO_SRC}/${dir} ; \
-		/usr/bin/perl ./x86_64cpuid.pl) > ${.TARGET}
+CFLAGS+=-fret-clean

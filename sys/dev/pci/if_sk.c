@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_sk.c,v 1.196 2024/05/24 06:02:57 jsg Exp $	*/
+/*	$OpenBSD: if_sk.c,v 1.199 2024/09/04 07:54:52 mglocker Exp $	*/
 
 /*
  * Copyright (c) 1997, 1998, 1999, 2000
@@ -1126,7 +1126,6 @@ sk_activate(struct device *self, int act)
 {
 	struct sk_if_softc *sc_if = (void *)self;
 	struct ifnet *ifp = &sc_if->arpcom.ac_if;
-	int rv = 0;
 
 	switch (act) {
 	case DVACT_RESUME:
@@ -1134,11 +1133,8 @@ sk_activate(struct device *self, int act)
 		if (ifp->if_flags & IFF_RUNNING)
 			sk_init(sc_if);
 		break;
-	default:
-		rv = config_activate_children(self, act);
-		break;
 	}
-	return (rv);
+	return (0);
 }
 
 int
@@ -2083,7 +2079,8 @@ sk_init_xmac(struct sk_if_softc	*sc_if)
 	sc_if->sk_link = 1;
 }
 
-void sk_init_yukon(struct sk_if_softc *sc_if)
+void
+sk_init_yukon(struct sk_if_softc *sc_if)
 {
 	u_int32_t		phy, v;
 	u_int16_t		reg;
@@ -2274,7 +2271,7 @@ sk_init(void *xsc_if)
 	 * transmit command due to CPU/cache related interim storage problems
 	 * under certain conditions. The document recommends a polling
 	 * mechanism to send a Start transmit command to initiate transfer
-	 * of ready descriptors regulary. To cope with this issue sk(4) now
+	 * of ready descriptors regularly. To cope with this issue sk(4) now
 	 * enables descriptor poll timer to initiate descriptor processing
 	 * periodically as defined by SK_DPT_TIMER_MAX. However sk(4) still
 	 * issue SK_TXBMU_TX_START to Tx BMU to get fast execution of Tx

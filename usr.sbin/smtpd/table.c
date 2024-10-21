@@ -1,4 +1,4 @@
-/*	$OpenBSD: table.c,v 1.52 2024/05/07 12:10:06 op Exp $	*/
+/*	$OpenBSD: table.c,v 1.54 2024/06/09 10:13:05 gilles Exp $	*/
 
 /*
  * Copyright (c) 2013 Eric Faurot <eric@openbsd.org>
@@ -83,6 +83,7 @@ table_service_name(enum table_service s)
 	case K_RELAYHOST:	return "relayhost";
 	case K_STRING:		return "string";
 	case K_REGEX:		return "regex";
+	case K_AUTH:		return "auth";
 	}
 	return "???";
 }
@@ -116,6 +117,8 @@ table_service_from_name(const char *service)
 		return K_STRING;
 	if (!strcmp(service, "regex"))
 		return K_REGEX;
+	if (!strcmp(service, "auth"))
+		return K_AUTH;
 	return (-1);
 }
 
@@ -245,6 +248,7 @@ table_create(struct smtpd *conf, const char *backend, const char *name,
 		fatalx("table_create: backend \"%s\" does not exist", backend);
 
 	t = xcalloc(1, sizeof(*t));
+	t->t_services = tb->services;
 	t->t_backend = tb;
 
 	if (config) {
@@ -341,7 +345,7 @@ table_check_type(struct table *t, uint32_t mask)
 int
 table_check_service(struct table *t, uint32_t mask)
 {
-	return t->t_backend->services & mask;
+	return t->t_services & mask;
 }
 
 int

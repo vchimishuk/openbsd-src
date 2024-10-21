@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_qwx_pci.c,v 1.16 2024/05/24 06:02:56 jsg Exp $	*/
+/*	$OpenBSD: if_qwx_pci.c,v 1.23 2024/10/04 07:46:33 kevlo Exp $	*/
 
 /*
  * Copyright 2023 Stefan Sperling <stsp@openbsd.org>
@@ -96,6 +96,7 @@
 #include <dev/ic/qwxreg.h>
 #include <dev/ic/qwxvar.h>
 
+#ifdef QWX_DEBUG 
 /* Headers needed for RDDM dump */
 #include <sys/namei.h>
 #include <sys/pledge.h>
@@ -103,6 +104,7 @@
 #include <sys/fcntl.h>
 #include <sys/stat.h>
 #include <sys/proc.h>
+#endif
 
 #define ATH11K_PCI_IRQ_CE0_OFFSET	3
 #define ATH11K_PCI_IRQ_DP_OFFSET	14
@@ -372,11 +374,9 @@ struct qwx_pci_softc {
 	struct qwx_dmamem	*cmd_ctxt;
 
 
-	struct qwx_pci_xfer_ring xfer_rings[4];
-#define QWX_PCI_XFER_RING_LOOPBACK_OUTBOUND	0
-#define QWX_PCI_XFER_RING_LOOPBACK_INBOUND	1
-#define QWX_PCI_XFER_RING_IPCR_OUTBOUND		2
-#define QWX_PCI_XFER_RING_IPCR_INBOUND		3
+	struct qwx_pci_xfer_ring xfer_rings[2];
+#define QWX_PCI_XFER_RING_IPCR_OUTBOUND		0
+#define QWX_PCI_XFER_RING_IPCR_INBOUND		1
 	struct qwx_pci_event_ring event_rings[QWX_NUM_EVENT_CTX];
 	struct qwx_pci_cmd_ring cmd_ring;
 };
@@ -452,7 +452,9 @@ void	qwx_mhi_init_mmio(struct qwx_pci_softc *);
 int	qwx_mhi_fw_load_bhi(struct qwx_pci_softc *, uint8_t *, size_t);
 int	qwx_mhi_fw_load_bhie(struct qwx_pci_softc *, uint8_t *, size_t);
 void	qwx_rddm_prepare(struct qwx_pci_softc *);
+#ifdef QWX_DEBUG
 void	qwx_rddm_task(void *);
+#endif
 void *	qwx_pci_event_ring_get_elem(struct qwx_pci_event_ring *, uint64_t);
 void	qwx_pci_intr_ctrl_event_mhi(struct qwx_pci_softc *, uint32_t);
 void	qwx_pci_intr_ctrl_event_ee(struct qwx_pci_softc *, uint32_t);
@@ -741,7 +743,6 @@ qwx_pci_attach(struct device *parent, struct device *self, void *aux)
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ifnet *ifp = &ic->ic_if;
 	uint32_t soc_hw_version_major, soc_hw_version_minor;
-	const struct qwx_pci_ops *pci_ops;
 	struct pci_attach_args *pa = aux;
 	pci_intr_handle_t ih;
 	pcireg_t memtype, reg;
@@ -880,6 +881,9 @@ qwx_pci_attach(struct device *parent, struct device *self, void *aux)
 
 	pci_set_powerstate(pa->pa_pc, pa->pa_tag, PCI_PMCSR_STATE_D0);
 
+	/* register PCI ops */
+	psc->sc_pci_ops = &qwx_pci_ops_qca6390;
+
 	switch (PCI_PRODUCT(pa->pa_id)) {
 	case PCI_PRODUCT_QUALCOMM_QCA6390:
 		qwx_pci_read_hw_version(sc, &soc_hw_version_major,
@@ -894,11 +898,10 @@ qwx_pci_attach(struct device *parent, struct device *self, void *aux)
 			return;
 		}
 
-		pci_ops = &qwx_pci_ops_qca6390;
 		psc->max_chan = QWX_MHI_CONFIG_QCA6390_MAX_CHANNELS;
 		break;
 	case PCI_PRODUCT_QUALCOMM_QCN9074:
-		pci_ops = &qwx_pci_ops_qcn9074;
+		psc->sc_pci_ops = &qwx_pci_ops_qcn9074;
 		sc->sc_hw_rev = ATH11K_HW_QCN9074_HW10;
 		psc->max_chan = QWX_MHI_CONFIG_QCA9074_MAX_CHANNELS;
 		break;
@@ -928,16 +931,12 @@ unsupported_wcn6855_soc:
 			return;
 		}
 
-		pci_ops = &qwx_pci_ops_qca6390;
 		psc->max_chan = QWX_MHI_CONFIG_QCA6390_MAX_CHANNELS;
 		break;
 	default:
 		printf(": unsupported chip\n");
 		return;
 	}
-
-	/* register PCI ops */
-	psc->sc_pci_ops = pci_ops;
 
 	error = qwx_pcic_init_msi_config(sc);
 	if (error)
@@ -1042,8 +1041,9 @@ unsupported_wcn6855_soc:
 		goto err_irq_affinity_cleanup;
 	}
 #endif
+#ifdef QWX_DEBUG
 	task_set(&psc->rddm_task, qwx_rddm_task, psc);
-
+#endif
 	ic->ic_phytype = IEEE80211_T_OFDM;	/* not only, but not used */
 	ic->ic_opmode = IEEE80211_M_STA;	/* default to BSS mode */
 	ic->ic_state = IEEE80211_S_INIT;
@@ -1086,6 +1086,8 @@ unsupported_wcn6855_soc:
 	/* Override 802.11 state transition machine. */
 	sc->sc_newstate = ic->ic_newstate;
 	ic->ic_newstate = qwx_newstate;
+	ic->ic_set_key = qwx_set_key;
+	ic->ic_delete_key = qwx_delete_key;
 #if 0
 	ic->ic_updatechan = qwx_updatechan;
 	ic->ic_updateprot = qwx_updateprot;
@@ -1290,18 +1292,6 @@ qwx_pci_alloc_xfer_rings_qca6390(struct qwx_pci_softc *psc)
 	int ret;
 
 	ret = qwx_pci_alloc_xfer_ring(sc,
-	    &psc->xfer_rings[QWX_PCI_XFER_RING_LOOPBACK_OUTBOUND],
-	    0, MHI_CHAN_TYPE_OUTBOUND, 0, 32);
-	if (ret)
-		goto fail;
-
-	ret = qwx_pci_alloc_xfer_ring(sc,
-	    &psc->xfer_rings[QWX_PCI_XFER_RING_LOOPBACK_INBOUND],
-	    1, MHI_CHAN_TYPE_INBOUND, 0, 32);
-	if (ret)
-		goto fail;
-
-	ret = qwx_pci_alloc_xfer_ring(sc,
 	    &psc->xfer_rings[QWX_PCI_XFER_RING_IPCR_OUTBOUND],
 	    20, MHI_CHAN_TYPE_OUTBOUND, 1, 64);
 	if (ret)
@@ -1324,18 +1314,6 @@ qwx_pci_alloc_xfer_rings_qcn9074(struct qwx_pci_softc *psc)
 {
 	struct qwx_softc *sc = &psc->sc_sc;
 	int ret;
-
-	ret = qwx_pci_alloc_xfer_ring(sc,
-	    &psc->xfer_rings[QWX_PCI_XFER_RING_LOOPBACK_OUTBOUND],
-	    0, MHI_CHAN_TYPE_OUTBOUND, 1, 32);
-	if (ret)
-		goto fail;
-
-	ret = qwx_pci_alloc_xfer_ring(sc,
-	    &psc->xfer_rings[QWX_PCI_XFER_RING_LOOPBACK_INBOUND],
-	    1, MHI_CHAN_TYPE_INBOUND, 1, 32);
-	if (ret)
-		goto fail;
 
 	ret = qwx_pci_alloc_xfer_ring(sc,
 	    &psc->xfer_rings[QWX_PCI_XFER_RING_IPCR_OUTBOUND],
@@ -3466,6 +3444,7 @@ qwx_rddm_prepare(struct qwx_pci_softc *psc)
 	psc->rddm_vec = vec_adm;
 }
 
+#ifdef QWX_DEBUG
 void
 qwx_rddm_task(void *arg)
 {
@@ -3560,6 +3539,7 @@ done:
 	psc->rddm_vec = NULL;
 	DPRINTF("%s: done, error %d\n", __func__, error);
 }
+#endif
 
 void *
 qwx_pci_event_ring_get_elem(struct qwx_pci_event_ring *ring, uint64_t rp)
@@ -4071,11 +4051,25 @@ qwx_pci_intr(void *arg)
 	     sc->sc_dev.dv_xname, psc->bhi_ee, ee, psc->mhi_state, state);
 
 	if (ee == MHI_EE_RDDM) {
+		/* Firmware crash, e.g. due to invalid DMA memory access. */
 		psc->bhi_ee = ee;
+#ifdef QWX_DEBUG
 		if (!psc->rddm_triggered) {
+			/* Write fw memory dump to root's home directory. */
 			task_add(systq, &psc->rddm_task);
 			psc->rddm_triggered = 1;
 		}
+#else
+		printf("%s: fatal firmware error\n",
+		   sc->sc_dev.dv_xname);
+		if (!test_bit(ATH11K_FLAG_CRASH_FLUSH, sc->sc_flags) &&
+		    (sc->sc_ic.ic_if.if_flags & (IFF_UP | IFF_RUNNING)) ==
+		    (IFF_UP | IFF_RUNNING)) {
+			/* Try to reset the device. */
+			set_bit(ATH11K_FLAG_CRASH_FLUSH, sc->sc_flags);
+			task_add(systq, &sc->init_task);
+		}
+#endif
 		return 1;
 	} else if (psc->bhi_ee == MHI_EE_PBL || psc->bhi_ee == MHI_EE_SBL) {
 		int new_ee = -1, new_mhi_state = -1;
@@ -4107,9 +4101,11 @@ qwx_pci_intr(void *arg)
 				ret = 1;
 		}
 
-		for (i = 0; i < nitems(sc->ext_irq_grp); i++) {
-			if (qwx_dp_service_srng(sc, i))
-				ret = 1;
+		if (test_bit(ATH11K_FLAG_EXT_IRQ_ENABLED, sc->sc_flags)) {
+			for (i = 0; i < nitems(sc->ext_irq_grp); i++) {
+				if (qwx_dp_service_srng(sc, i))
+					ret = 1;
+			}
 		}
 	}
 

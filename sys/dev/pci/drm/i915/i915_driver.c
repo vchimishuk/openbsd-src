@@ -2080,7 +2080,6 @@ inteldrm_doswitch(void *v)
 {
 	struct inteldrm_softc *dev_priv = v;
 	struct rasops_info *ri = &dev_priv->ro;
-	struct drm_device *dev = &dev_priv->drm;
 
 	rasops_show_screen(ri, dev_priv->switchcookie, 0, NULL, NULL);
 	intel_fbdev_restore_mode(dev_priv);
@@ -2094,7 +2093,6 @@ inteldrm_enter_ddb(void *v, void *cookie)
 {
 	struct inteldrm_softc *dev_priv = v;
 	struct rasops_info *ri = &dev_priv->ro;
-	struct drm_device *dev = &dev_priv->drm;
 
 	if (cookie == ri->ri_active)
 		return;
@@ -2252,12 +2250,11 @@ inteldrm_attach(struct device *parent, struct device *self, void *aux)
 	struct drm_device *dev;
 	struct pci_attach_args *pa = aux;
 	const struct pci_device_id *id;
-	struct intel_device_info *info, *device_info;
-	struct intel_runtime_info *runtime;
+	struct intel_device_info *info;
 	extern int vga_console_attached;
 	int mmio_bar, mmio_size, mmio_type;
-	int ret;
 
+	dev_priv->pa = pa;
 	dev_priv->pc = pa->pa_pc;
 	dev_priv->tag = pa->pa_tag;
 	dev_priv->iot = pa->pa_iot;
@@ -2266,13 +2263,18 @@ inteldrm_attach(struct device *parent, struct device *self, void *aux)
 	dev_priv->memex = pa->pa_memex;
 	dev_priv->vga_regs = &dev_priv->bar;
 
+	id = drm_find_description(PCI_VENDOR(pa->pa_id),
+	    PCI_PRODUCT(pa->pa_id), pciidlist);
+	dev_priv->id = id;
+	info = (struct intel_device_info *)id->driver_data;
+
 	if (PCI_CLASS(pa->pa_class) == PCI_CLASS_DISPLAY &&
 	    PCI_SUBCLASS(pa->pa_class) == PCI_SUBCLASS_DISPLAY_VGA &&
 	    (pci_conf_read(pa->pa_pc, pa->pa_tag, PCI_COMMAND_STATUS_REG)
 	    & (PCI_COMMAND_IO_ENABLE | PCI_COMMAND_MEM_ENABLE))
 	    == (PCI_COMMAND_IO_ENABLE | PCI_COMMAND_MEM_ENABLE)) {
 		dev_priv->primary = 1;
-		dev_priv->console = vga_is_console(pa->pa_iot, -1);;
+		dev_priv->console = vga_is_console(pa->pa_iot, -1);
 		vga_console_attached = 1;
 	}
 
@@ -2284,6 +2286,18 @@ inteldrm_attach(struct device *parent, struct device *self, void *aux)
 	}
 #endif
 
+	/*
+	 * Meteor Lake GOP framebuffer doesn't pass efifb pci bar tests
+	 * too early for IS_METEORLAKE which uses runtime info
+	 */
+	if (info->platform == INTEL_METEORLAKE) {
+		dev_priv->primary = 1;
+		dev_priv->console = 1;
+#if NEFIFB > 0
+		efifb_detach();
+#endif
+	}
+
 	printf("\n");
 
 	dev = drm_attach_pci(&i915_drm_driver, pa, 0, dev_priv->primary,
@@ -2293,34 +2307,44 @@ inteldrm_attach(struct device *parent, struct device *self, void *aux)
 		return;
 	}
 
-	id = drm_find_description(PCI_VENDOR(pa->pa_id),
-	    PCI_PRODUCT(pa->pa_id), pciidlist);
-	dev_priv->id = id;
-	info = (struct intel_device_info *)id->driver_data;
+	pci_set_drvdata(dev->pdev, dev_priv);
 
 	/* Device parameters start as a copy of module parameters. */
 	i915_params_copy(&dev_priv->params, &i915_modparams);
-	dev_priv->params.enable_guc = 0;
 	dev_priv->params.request_timeout_ms = 0;
 	dev_priv->params.enable_psr = 0;
 
 	/* Set up device info and initial runtime info. */
 	intel_device_info_driver_create(dev_priv, dev->pdev->device, info);
 
+	/* uc_expand_default_options() with no GuC submission */
+	if (GRAPHICS_VER(dev_priv) >= 12 &&
+	    (INTEL_INFO(dev_priv)->platform != INTEL_TIGERLAKE) &&
+	    (INTEL_INFO(dev_priv)->platform != INTEL_ROCKETLAKE) &&
+	    (INTEL_INFO(dev_priv)->platform != INTEL_XEHPSDV) &&
+	    (INTEL_INFO(dev_priv)->platform != INTEL_PONTEVECCHIO))
+		dev_priv->params.enable_guc = ENABLE_GUC_LOAD_HUC;
+
 	mmio_bar = (GRAPHICS_VER(dev_priv) == 2) ? 0x14 : 0x10;
-	/* Before gen4, the registers and the GTT are behind different BARs.
+
+	/* from intel_uncore_setup_mmio() */
+
+	/*
+	 * Before gen4, the registers and the GTT are behind different BARs.
 	 * However, from gen4 onwards, the registers and the GTT are shared
 	 * in the same BAR, so we want to restrict this ioremap from
 	 * clobbering the GTT which we want ioremap_wc instead. Fortunately,
 	 * the register BAR remains the same size for all the earlier
 	 * generations up to Ironlake.
+	 * For dgfx chips register range is expanded to 4MB, and this larger
+	 * range is also used for integrated gpus beginning with Meteor Lake.
 	 */
-	if (GRAPHICS_VER(dev_priv) < 5)
-		mmio_size = 512 * 1024;
-	else if (IS_DGFX(dev_priv))
+	if (IS_DGFX(dev_priv) || GRAPHICS_VER_FULL(dev_priv) >= IP_VER(12, 70))
 		mmio_size = 4 * 1024 * 1024;
-	else
+	else if (GRAPHICS_VER(dev_priv) >= 5)
 		mmio_size = 2 * 1024 * 1024;
+	else
+		mmio_size = 512 * 1024;
 
 	mmio_type = pci_mapreg_type(pa->pa_pc, pa->pa_tag, mmio_bar);
 	if (pci_mapreg_map(pa, mmio_bar, mmio_type, BUS_SPACE_MAP_LINEAR,
@@ -2382,8 +2406,10 @@ inteldrm_attach(struct device *parent, struct device *self, void *aux)
 void
 inteldrm_forcedetach(struct inteldrm_softc *dev_priv)
 {
+#ifdef notyet
 	struct pci_softc *psc = (struct pci_softc *)dev_priv->sc_dev.dv_parent;
 	pcitag_t tag = dev_priv->tag;
+#endif
 	extern int vga_console_attached;
 
 	if (dev_priv->primary) {
@@ -2408,7 +2434,6 @@ inteldrm_attachhook(struct device *self)
 	struct rasops_info *ri = &dev_priv->ro;
 	struct wsemuldisplaydev_attach_args aa;
 	const struct pci_device_id *id = dev_priv->id;
-	struct drm_device *dev = &dev_priv->drm;
 	int orientation_quirk;
 
 	if (inteldrm_refcnt == 0) {
@@ -2617,7 +2642,6 @@ inteldrm_firmware_backlight(struct inteldrm_softc *dev_priv,
 void
 inteldrm_init_backlight(struct inteldrm_softc *dev_priv)
 {
-	struct drm_device *dev = &dev_priv->drm;
 	struct wsdisplay_param dp;
 
 	dp.param = WSDISPLAYIO_PARAM_BRIGHTNESS;

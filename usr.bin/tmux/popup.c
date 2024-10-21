@@ -1,4 +1,4 @@
-/* $OpenBSD: popup.c,v 1.53 2024/03/21 11:30:42 nicm Exp $ */
+/* $OpenBSD: popup.c,v 1.55 2024/09/30 07:54:51 nicm Exp $ */
 
 /*
  * Copyright (c) 2020 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -543,7 +543,7 @@ popup_key_cb(struct client *c, void *data, struct key_event *event)
 	}
 	if ((((pd->flags & (POPUP_CLOSEEXIT|POPUP_CLOSEEXITZERO)) == 0) ||
 	    pd->job == NULL) &&
-	    (event->key == '\033' || event->key == '\003'))
+	    (event->key == '\033' || event->key == ('c'|KEYC_CTRL)))
 		return (1);
 	if (pd->job != NULL) {
 		if (KEYC_IS_MOUSE(event->key)) {
@@ -718,7 +718,7 @@ popup_display(int flags, enum box_lines lines, struct cmdq_item *item, u_int px,
 
 	pd->job = job_run(shellcmd, argc, argv, env, s, cwd,
 	    popup_job_update_cb, popup_job_complete_cb, NULL, pd,
-	    JOB_NOWAIT|JOB_PTY|JOB_KEEPWRITE, jx, jy);
+	    JOB_NOWAIT|JOB_PTY|JOB_KEEPWRITE|JOB_DEFAULTSHELL, jx, jy);
 	pd->ictx = input_init(NULL, job_get_event(pd->job), &pd->palette);
 
 	server_client_set_overlay(c, 0, popup_check_cb, popup_mode_cb,

@@ -1,4 +1,4 @@
-/*	$OpenBSD: process.c,v 1.35 2022/01/12 15:13:36 martijn Exp $	*/
+/*	$OpenBSD: process.c,v 1.38 2024/08/28 14:30:26 millert Exp $	*/
 
 /*-
  * Copyright (c) 1992 Diomidis Spinellis.
@@ -38,7 +38,7 @@
 #include <sys/uio.h>
 
 #include <ctype.h>
-#include <errno.h>
+#include <err.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <regex.h>
@@ -90,7 +90,7 @@ process(void)
 	size_t len, oldpsl;
 	char *p;
 
-	for (linenum = 0; mf_fgets(&PS, REPLACE);) {
+	for (linenum = 0; mf_getline(&PS, REPLACE);) {
 		pd = 0;
 top:
 		cp = prog;
@@ -164,14 +164,14 @@ redirect:
 				if (!nflag && !pd)
 					OUT();
 				flush_appends();
-				if (!mf_fgets(&PS, REPLACE))
+				if (!mf_getline(&PS, REPLACE))
 					exit(0);
 				pd = 0;
 				break;
 			case 'N':
 				flush_appends();
 				cspace(&PS, "\n", 1, 0);
-				if (!mf_fgets(&PS, 0))
+				if (!mf_getline(&PS, 0))
 					exit(0);
 				break;
 			case 'p':
@@ -226,12 +226,10 @@ redirect:
 				if (cp->u.fd == -1 && (cp->u.fd = open(cp->t,
 				    O_WRONLY|O_APPEND|O_CREAT|O_TRUNC,
 				    DEFFILEMODE)) == -1)
-					error(FATAL, "%s: %s",
-					    cp->t, strerror(errno));
+					err(1, "%s", cp->t);
 				if ((size_t)write(cp->u.fd, ps, psl) != psl ||
 				    write(cp->u.fd, "\n", 1) != 1)
-					error(FATAL, "%s: %s",
-					    cp->t, strerror(errno));
+					err(1, "%s", cp->t);
 				break;
 			case 'x':
 				if (hs == NULL)
@@ -346,8 +344,7 @@ substitute(struct s_command *cp)
 	if (re == NULL) {
 		if (defpreg != NULL && cp->u.s->maxbref > defpreg->re_nsub) {
 			linenum = cp->u.s->linenum;
-			error(COMPILE, "\\%d not defined in the RE",
-			    cp->u.s->maxbref);
+			error("\\%d not defined in the RE", cp->u.s->maxbref);
 		}
 	}
 	if (!regexec_e(re, ps, 0, 0, 0, psl))
@@ -390,14 +387,12 @@ substitute(struct s_command *cp)
 		 * and at the end of the line, terminate.
 		 */
 		if (match[0].rm_so == match[0].rm_eo) {
-			if (*s == '\0' || *s == '\n')
-				slen = -1;
-			else
-				slen--;
-			if (*s != '\0') {
+			if (slen > 0) {
 				cspace(&SS, s++, 1, APPEND);
+				slen--;
 				le++;
-			}
+			} else
+				slen = -1;
 			lastempty = 1;
 		} else
 			lastempty = 0;
@@ -431,10 +426,10 @@ substitute(struct s_command *cp)
 	if (cp->u.s->wfile && !pd) {
 		if (cp->u.s->wfd == -1 && (cp->u.s->wfd = open(cp->u.s->wfile,
 		    O_WRONLY|O_APPEND|O_CREAT|O_TRUNC, DEFFILEMODE)) == -1)
-			error(FATAL, "%s: %s", cp->u.s->wfile, strerror(errno));
+			err(1, "%s", cp->u.s->wfile);
 		if ((size_t)write(cp->u.s->wfd, ps, psl) != psl ||
 		    write(cp->u.s->wfd, "\n", 1) != 1)
-			error(FATAL, "%s: %s", cp->u.s->wfile, strerror(errno));
+			err(1, "%s", cp->u.s->wfile);
 	}
 	return (1);
 }
@@ -473,7 +468,7 @@ flush_appends(void)
 			break;
 		}
 	if (ferror(outfile))
-		error(FATAL, "%s: %s", outfname, strerror(errno ? errno : EIO));
+		err(1, "%s", outfname);
 	appendx = sdone = 0;
 }
 
@@ -513,7 +508,7 @@ lputs(char *s, size_t len)
 	(void)fputc('$', outfile);
 	(void)fputc('\n', outfile);
 	if (ferror(outfile))
-		error(FATAL, "%s: %s", outfname, strerror(errno ? errno : EIO));
+		err(1, "%s", outfname);
 }
 
 static inline int
@@ -524,7 +519,7 @@ regexec_e(regex_t *preg, const char *string, int eflags,
 
 	if (preg == NULL) {
 		if (defpreg == NULL)
-			error(FATAL, "first RE may not be empty");
+			errx(1, "first RE may not be empty");
 	} else
 		defpreg = preg;
 
@@ -540,7 +535,7 @@ regexec_e(regex_t *preg, const char *string, int eflags,
 	case REG_NOMATCH:
 		return (0);
 	}
-	error(FATAL, "RE error: %s", strregerror(eval, defpreg));
+	errx(1, "RE error: %s", strregerror(eval, defpreg));
 }
 
 /*
@@ -624,13 +619,12 @@ cfclose(struct s_command *cp, struct s_command *end)
 		switch (cp->code) {
 		case 's':
 			if (cp->u.s->wfd != -1 && close(cp->u.s->wfd))
-				error(FATAL,
-				    "%s: %s", cp->u.s->wfile, strerror(errno));
+				err(1, "%s", cp->u.s->wfile);
 			cp->u.s->wfd = -1;
 			break;
 		case 'w':
 			if (cp->u.fd != -1 && close(cp->u.fd))
-				error(FATAL, "%s: %s", cp->t, strerror(errno));
+				err(1, "%s", cp->t);
 			cp->u.fd = -1;
 			break;
 		case '{':

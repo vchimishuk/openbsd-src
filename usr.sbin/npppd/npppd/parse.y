@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.y,v 1.27 2023/04/19 13:33:37 jsg Exp $ */
+/*	$OpenBSD: parse.y,v 1.31 2024/08/22 07:56:47 florian Exp $ */
 
 /*
  * Copyright (c) 2002, 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -32,6 +32,7 @@
 #include <inttypes.h>
 #include <limits.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -134,6 +135,7 @@ typedef struct {
 %token  INTERFACE ADDRESS IPCP
 %token	BIND FROM AUTHENTICATED BY TO
 %token	ERROR
+%token	DAE CLIENT NAS_ID
 %token	<v.string>		STRING
 %token	<v.number>		NUMBER
 %type	<v.yesno>		yesno
@@ -164,6 +166,7 @@ grammar		: /* empty */
 		| grammar ipcp '\n'
 		| grammar interface '\n'
 		| grammar bind '\n'
+		| grammar radius '\n'
 		| grammar error '\n'		{ file->errors++; }
 		;
 
@@ -513,6 +516,80 @@ tunnopt		: LISTEN ON addressport {
 			curr_tunnconf->debug_dump_pktout = $2;
 		}
 		;
+radius		: RADIUS NAS_ID STRING {
+			if (strlcpy(conf->nas_id, $3, sizeof(conf->nas_id))
+			    >= sizeof(conf->nas_id)) {
+				yyerror("`radius nas-id' is too long.  use "
+				    "less than %u chars.",
+				    (unsigned)sizeof(conf->nas_id) - 1);
+				free($3);
+				YYERROR;
+			}
+			free($3);
+		}
+		| RADIUS DAE CLIENT address SECRET STRING {
+			struct radclientconf *client;
+			int secretsiz;
+
+			secretsiz = strlen($6) + 1;
+			if ((client = calloc(1, offsetof(struct radclientconf,
+			    secret[secretsiz]))) == NULL) {
+				yyerror("%s", strerror(errno));
+				free($6);
+				YYERROR;
+			}
+			strlcpy(client->secret, $6, secretsiz);
+
+			switch ($4.ss_family) {
+			case AF_INET:
+				memcpy(&client->addr, &$4,
+				    sizeof(struct sockaddr_in));
+				break;
+			case AF_INET6:
+				memcpy(&client->addr, &$4,
+				    sizeof(struct sockaddr_in6));
+				break;
+			default:
+				yyerror("address family %d not supported",
+				    $4.ss_family);
+				free($6);
+				YYERROR;
+				break;
+			}
+			TAILQ_INSERT_TAIL(&conf->raddaeclientconfs, client,
+			    entry);
+			free($6);
+		}
+		| RADIUS DAE LISTEN ON addressport {
+			struct radlistenconf *listen;
+
+			if (ntohs(((struct sockaddr_in *)&$5)->sin_port) == 0)
+				((struct sockaddr_in *)&$5)->sin_port = htons(
+				    RADIUS_DAE_DEFAULT_PORT);
+
+			if ((listen = calloc(1, sizeof(*listen))) == NULL) {
+				yyerror("%s", strerror(errno));
+				YYERROR;
+			}
+			switch ($5.ss_family) {
+			case AF_INET:
+				memcpy(&listen->addr, &$5,
+				    sizeof(struct sockaddr_in));
+				break;
+			case AF_INET6:
+				memcpy(&listen->addr, &$5,
+				    sizeof(struct sockaddr_in6));
+				break;
+			default:
+				yyerror("address family %d not supported",
+				    $5.ss_family);
+				YYERROR;
+				break;
+			}
+			TAILQ_INSERT_TAIL(&conf->raddaelistenconfs, listen,
+			    entry);
+		}
+		;
 
 tunnelproto	: L2TP                        { $$ = NPPPD_TUNNEL_L2TP; }
 		| PPTP                        { $$ = NPPPD_TUNNEL_PPTP; }
@@ -562,7 +639,7 @@ addressport	: address optport {
 		;
 
 in4_addr	: STRING {
-			if (inet_aton($1, &($$)) != 1) {
+			if (inet_pton(AF_INET, $1, &($$)) != 1) {
 				yyerror("could not parse the address %s", $1);
 				free($1);
 				YYERROR;
@@ -818,19 +895,23 @@ ipcpopt		: POOL_ADDRESS STRING ipcppooltype {
 		}
 		| DNS_SERVERS in4_addr in4_addr {
 			curr_ipcpconf->dns_use_resolver  = false;
+			curr_ipcpconf->dns_configured  = true;
 			curr_ipcpconf->dns_servers[0] = $2;
 			curr_ipcpconf->dns_servers[1] = $3;
 		}
 		| DNS_SERVERS in4_addr {
 			curr_ipcpconf->dns_use_resolver  = false;
+			curr_ipcpconf->dns_configured  = true;
 			curr_ipcpconf->dns_servers[0] = $2;
 			curr_ipcpconf->dns_servers[1].s_addr = 0;
 		}
 		| NBNS_SERVERS in4_addr in4_addr {
+			curr_ipcpconf->nbns_configured  = true;
 			curr_ipcpconf->nbns_servers[0] = $2;
 			curr_ipcpconf->nbns_servers[1] = $3;
 		}
 		| NBNS_SERVERS in4_addr {
+			curr_ipcpconf->nbns_configured  = true;
 			curr_ipcpconf->nbns_servers[0] = $2;
 			curr_ipcpconf->nbns_servers[1].s_addr = 0;
 		}
@@ -1007,6 +1088,8 @@ lookup(char *s)
 		{ "ccp-timeout",                  CCP_TIMEOUT},
 		{ "chap",                         CHAP},
 		{ "chap-name",                    CHAP_NAME},
+		{ "client",                       CLIENT},
+		{ "dae",                          DAE},
 		{ "debug-dump-pktin",             DEBUG_DUMP_PKTIN},
 		{ "debug-dump-pktout",            DEBUG_DUMP_PKTOUT},
 		{ "dns-servers",                  DNS_SERVERS},
@@ -1057,6 +1140,7 @@ lookup(char *s)
 		{ "mppe-key-state",               MPPE_KEY_STATE},
 		{ "mru",                          MRU},
 		{ "mschapv2",                     MSCHAPV2},
+		{ "nas-id",			  NAS_ID},
 		{ "nbns-servers",                 NBNS_SERVERS},
 		{ "no",                           NO},
 		{ "on",                           ON},
@@ -1425,6 +1509,9 @@ npppd_conf_init(struct npppd_conf *xconf)
 	TAILQ_INIT(&xconf->l2tp_confs);
 	TAILQ_INIT(&xconf->pptp_confs);
 	TAILQ_INIT(&xconf->pppoe_confs);
+	TAILQ_INIT(&xconf->raddaeclientconfs);
+	TAILQ_INIT(&xconf->raddaelistenconfs);
+	strlcpy(xconf->nas_id, "npppd", sizeof(xconf->nas_id));
 }
 
 void
@@ -1435,6 +1522,8 @@ npppd_conf_fini(struct npppd_conf *xconf)
 	struct ipcpconf *ipcp, *ipcp0;
 	struct iface    *iface, *iface0;
 	struct confbind *confbind, *confbind0;
+	struct radclientconf *radc, *radct;
+	struct radlistenconf *radl, *radlt;
 
 	TAILQ_FOREACH_SAFE(tunn, &xconf->tunnconfs, entry, tunn0) {
 		tunnconf_fini(tunn);
@@ -1451,6 +1540,10 @@ npppd_conf_fini(struct npppd_conf *xconf)
 	TAILQ_FOREACH_SAFE(confbind, &xconf->confbinds, entry, confbind0) {
 		free(confbind);
 	}
+	TAILQ_FOREACH_SAFE(radc, &xconf->raddaeclientconfs, entry, radct)
+		free(radc);
+	TAILQ_FOREACH_SAFE(radl, &xconf->raddaelistenconfs, entry, radlt)
+		free(radl);
 	TAILQ_INIT(&xconf->l2tp_confs);
 	TAILQ_INIT(&xconf->pptp_confs);
 	TAILQ_INIT(&xconf->pppoe_confs);

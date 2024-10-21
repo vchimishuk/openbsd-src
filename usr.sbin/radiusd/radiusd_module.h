@@ -20,6 +20,7 @@
 #include "radiusd.h"
 
 struct module_ctx;
+struct imsg;
 
 struct module_handlers {
 	/* Should send IMSG_OK or IMSG_NG */
@@ -37,11 +38,19 @@ struct module_handlers {
 	    size_t pktlen);
 	/* User-Password Attribute is encrypted if the module has the secret */
 
+	void (*next_response)(void *ctx, u_int query_id, const u_char *pkt,
+	    size_t pktlen);
+
 	void (*request_decoration)(void *ctx, u_int query_id, const u_char *pkt,
 	    size_t pktlen);
 
 	void (*response_decoration)(void *ctx, u_int query_id,
 	    const u_char *req, size_t reqlen, const u_char *res, size_t reslen);
+
+	void (*accounting_request)(void *ctx, u_int query_id, const u_char *pkt,
+	    size_t pktlen);
+
+	void (*dispatch_control)(void *ctx, struct imsg *);
 };
 
 #define SYNTAX_ASSERT(_cond, _msg)				\
@@ -72,11 +81,17 @@ int			 module_userpass_fail(struct module_base *, u_int,
 			    const char *);
 int			 module_accsreq_answer(struct module_base *, u_int,
 			    const u_char *, size_t);
+int			 module_accsreq_next(struct module_base *, u_int,
+			    const u_char *, size_t);
 int			 module_accsreq_aborted(struct module_base *, u_int);
 int			 module_reqdeco_done(struct module_base *, u_int,
 			    const u_char *, size_t);
 int			 module_resdeco_done(struct module_base *, u_int,
 			    const u_char *, size_t);
+int			 module_imsg_compose(struct module_base *, uint32_t,
+			    uint32_t, pid_t, int, const void *, size_t);
+int			 module_imsg_composev(struct module_base *, uint32_t,
+			    uint32_t, pid_t, int, const struct iovec *, int);
 
 __END_DECLS
 

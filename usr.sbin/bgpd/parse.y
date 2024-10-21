@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.y,v 1.463 2024/05/22 08:41:14 claudio Exp $ */
+/*	$OpenBSD: parse.y,v 1.470 2024/10/09 10:01:29 claudio Exp $ */
 
 /*
  * Copyright (c) 2002, 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -187,6 +187,7 @@ static int	 push_unary_numop(enum comp_ops, long long);
 static int	 push_binary_numop(enum comp_ops, long long, long long);
 static int	 geticmptypebyname(char *, uint8_t);
 static int	 geticmpcodebyname(u_long, char *, uint8_t);
+static int	 merge_auth_conf(struct auth_config *, struct auth_config *);
 
 static struct bgpd_config	*conf;
 static struct network_head	*netconf;
@@ -228,6 +229,7 @@ typedef struct {
 		}			prefix;
 		struct filter_prefixlen	prefixlen;
 		struct prefixset_item	*prefixset_item;
+		struct auth_config	authconf;
 		struct {
 			enum auth_enc_alg	enc_alg;
 			uint8_t			enc_key_len;
@@ -241,7 +243,7 @@ typedef struct {
 
 %token	AS ROUTERID HOLDTIME YMIN LISTEN ON FIBUPDATE FIBPRIORITY RTABLE
 %token	NONE UNICAST VPN RD EXPORT EXPORTTRGT IMPORTTRGT DEFAULTROUTE
-%token	RDE RIB EVALUATE IGNORE COMPARE RTR PORT
+%token	RDE RIB EVALUATE IGNORE COMPARE RTR PORT MINVERSION
 %token	GROUP NEIGHBOR NETWORK
 %token	EBGP IBGP
 %token	FLOWSPEC PROTO FLAGS FRAGMENT TOS LENGTH ICMPTYPE CODE
@@ -250,7 +252,7 @@ typedef struct {
 %token	SEND RECV PLUS POLICY ROLE
 %token	DEMOTE ENFORCE NEIGHBORAS ASOVERRIDE REFLECTOR DEPEND DOWN
 %token	DUMP IN OUT SOCKET RESTRICTED
-%token	LOG TRANSPARENT
+%token	LOG TRANSPARENT FILTERED
 %token	TCP MD5SIG PASSWORD KEY TTLSECURITY
 %token	ALLOW DENY MATCH
 %token	QUICK
@@ -293,6 +295,7 @@ typedef struct {
 %type	<v.filter_prefix>	filter_prefix filter_prefix_l filter_prefix_h
 %type	<v.filter_prefix>	filter_prefix_m
 %type	<v.u8>			unaryop equalityop binaryop filter_as_type
+%type	<v.authconf>		authconf
 %type	<v.encspec>		encspec
 %type	<v.aspa_elm>		aspa_tas aspa_tas_l
 %%
@@ -724,6 +727,18 @@ rtropt		: DESCR STRING		{
 		| PORT port {
 			currtr->remote_port = $2;
 		}
+		| MINVERSION NUMBER {
+			if ($2 < 0 || $2 > RTR_MAX_VERSION) {
+				yyerror("min-version must be between %u and %u",
+				    0, RTR_MAX_VERSION);
+				YYERROR;
+			}
+			currtr->min_version = $2;
+		}
+		| authconf {
+			if (merge_auth_conf(&currtr->auth, &$1) == 0)
+				YYERROR;
+		}
 		;
 
 conf_main	: AS as4number		{
@@ -932,6 +947,14 @@ conf_main	: AS as4number		{
 				YYERROR;
 			}
 			free($3);
+		}
+		| RDE RIB STRING INCLUDE FILTERED {
+			if (strcmp($3, "Loc-RIB") != 0) {
+				yyerror("include filtered only supported in "
+				    "Loc-RIB");
+				YYERROR;
+			}
+			conf->filtered_in_locrib = 1;
 		}
 		| NEXTHOP QUALIFY VIA STRING	{
 			if (!strcmp($4, "bgp"))
@@ -2059,142 +2082,9 @@ peeropts	: REMOTEAS as4number	{
 			curpeer->conf.max_out_prefix = $2;
 			curpeer->conf.max_out_prefix_restart = $4;
 		}
-		| TCP MD5SIG PASSWORD string {
-			if (curpeer->conf.auth.method) {
-				yyerror("auth method cannot be redefined");
-				free($4);
+		| authconf {
+			if (merge_auth_conf(&curpeer->auth_conf, &$1) == 0)
 				YYERROR;
-			}
-			if (strlcpy(curpeer->conf.auth.md5key, $4,
-			    sizeof(curpeer->conf.auth.md5key)) >=
-			    sizeof(curpeer->conf.auth.md5key)) {
-				yyerror("tcp md5sig password too long: max %zu",
-				    sizeof(curpeer->conf.auth.md5key) - 1);
-				free($4);
-				YYERROR;
-			}
-			curpeer->conf.auth.method = AUTH_MD5SIG;
-			curpeer->conf.auth.md5key_len = strlen($4);
-			free($4);
-		}
-		| TCP MD5SIG KEY string {
-			if (curpeer->conf.auth.method) {
-				yyerror("auth method cannot be redefined");
-				free($4);
-				YYERROR;
-			}
-
-			if (str2key($4, curpeer->conf.auth.md5key,
-			    sizeof(curpeer->conf.auth.md5key)) == -1) {
-				free($4);
-				YYERROR;
-			}
-			curpeer->conf.auth.method = AUTH_MD5SIG;
-			curpeer->conf.auth.md5key_len = strlen($4) / 2;
-			free($4);
-		}
-		| IPSEC espah IKE {
-			if (curpeer->conf.auth.method) {
-				yyerror("auth method cannot be redefined");
-				YYERROR;
-			}
-			if ($2)
-				curpeer->conf.auth.method = AUTH_IPSEC_IKE_ESP;
-			else
-				curpeer->conf.auth.method = AUTH_IPSEC_IKE_AH;
-		}
-		| IPSEC espah inout SPI NUMBER STRING STRING encspec {
-			enum auth_alg	auth_alg;
-			uint8_t		keylen;
-
-			if (curpeer->conf.auth.method &&
-			    (((curpeer->conf.auth.spi_in && $3 == 1) ||
-			    (curpeer->conf.auth.spi_out && $3 == 0)) ||
-			    ($2 == 1 && curpeer->conf.auth.method !=
-			    AUTH_IPSEC_MANUAL_ESP) ||
-			    ($2 == 0 && curpeer->conf.auth.method !=
-			    AUTH_IPSEC_MANUAL_AH))) {
-				yyerror("auth method cannot be redefined");
-				free($6);
-				free($7);
-				YYERROR;
-			}
-
-			if (!strcmp($6, "sha1")) {
-				auth_alg = AUTH_AALG_SHA1HMAC;
-				keylen = 20;
-			} else if (!strcmp($6, "md5")) {
-				auth_alg = AUTH_AALG_MD5HMAC;
-				keylen = 16;
-			} else {
-				yyerror("unknown auth algorithm \"%s\"", $6);
-				free($6);
-				free($7);
-				YYERROR;
-			}
-			free($6);
-
-			if (strlen($7) / 2 != keylen) {
-				yyerror("auth key len: must be %u bytes, "
-				    "is %zu bytes", keylen, strlen($7) / 2);
-				free($7);
-				YYERROR;
-			}
-
-			if ($2)
-				curpeer->conf.auth.method =
-				    AUTH_IPSEC_MANUAL_ESP;
-			else {
-				if ($8.enc_alg) {
-					yyerror("\"ipsec ah\" doesn't take "
-					    "encryption keys");
-					free($7);
-					YYERROR;
-				}
-				curpeer->conf.auth.method =
-				    AUTH_IPSEC_MANUAL_AH;
-			}
-
-			if ($5 <= SPI_RESERVED_MAX || $5 > UINT_MAX) {
-				yyerror("bad spi number %lld", $5);
-				free($7);
-				YYERROR;
-			}
-
-			if ($3 == 1) {
-				if (str2key($7, curpeer->conf.auth.auth_key_in,
-				    sizeof(curpeer->conf.auth.auth_key_in)) ==
-				    -1) {
-					free($7);
-					YYERROR;
-				}
-				curpeer->conf.auth.spi_in = $5;
-				curpeer->conf.auth.auth_alg_in = auth_alg;
-				curpeer->conf.auth.enc_alg_in = $8.enc_alg;
-				memcpy(&curpeer->conf.auth.enc_key_in,
-				    &$8.enc_key,
-				    sizeof(curpeer->conf.auth.enc_key_in));
-				curpeer->conf.auth.enc_keylen_in =
-				    $8.enc_key_len;
-				curpeer->conf.auth.auth_keylen_in = keylen;
-			} else {
-				if (str2key($7, curpeer->conf.auth.auth_key_out,
-				    sizeof(curpeer->conf.auth.auth_key_out)) ==
-				    -1) {
-					free($7);
-					YYERROR;
-				}
-				curpeer->conf.auth.spi_out = $5;
-				curpeer->conf.auth.auth_alg_out = auth_alg;
-				curpeer->conf.auth.enc_alg_out = $8.enc_alg;
-				memcpy(&curpeer->conf.auth.enc_key_out,
-				    &$8.enc_key,
-				    sizeof(curpeer->conf.auth.enc_key_out));
-				curpeer->conf.auth.enc_keylen_out =
-				    $8.enc_key_len;
-				curpeer->conf.auth.auth_keylen_out = keylen;
-			}
-			free($7);
 		}
 		| TTLSECURITY yesno	{
 			curpeer->conf.ttlsec = $2;
@@ -2339,6 +2229,111 @@ safi		: NONE		{ $$ = SAFI_NONE; }
 
 nettype		: STATIC { $$ = 1; }
 		| CONNECTED { $$ = 0; }
+		;
+
+authconf	: TCP MD5SIG PASSWORD string {
+			memset(&$$, 0, sizeof($$));
+			if (strlcpy($$.md5key, $4, sizeof($$.md5key)) >=
+			    sizeof($$.md5key)) {
+				yyerror("tcp md5sig password too long: max %zu",
+				    sizeof($$.md5key) - 1);
+				free($4);
+				YYERROR;
+			}
+			$$.method = AUTH_MD5SIG;
+			$$.md5key_len = strlen($4);
+			free($4);
+		}
+		| TCP MD5SIG KEY string {
+			memset(&$$, 0, sizeof($$));
+			if (str2key($4, $$.md5key, sizeof($$.md5key)) == -1) {
+				free($4);
+				YYERROR;
+			}
+			$$.method = AUTH_MD5SIG;
+			$$.md5key_len = strlen($4) / 2;
+			free($4);
+		}
+		| IPSEC espah IKE {
+			memset(&$$, 0, sizeof($$));
+			if ($2)
+				$$.method = AUTH_IPSEC_IKE_ESP;
+			else
+				$$.method = AUTH_IPSEC_IKE_AH;
+		}
+		| IPSEC espah inout SPI NUMBER STRING STRING encspec {
+			enum auth_alg	auth_alg;
+			uint8_t		keylen;
+
+			memset(&$$, 0, sizeof($$));
+			if (!strcmp($6, "sha1")) {
+				auth_alg = AUTH_AALG_SHA1HMAC;
+				keylen = 20;
+			} else if (!strcmp($6, "md5")) {
+				auth_alg = AUTH_AALG_MD5HMAC;
+				keylen = 16;
+			} else {
+				yyerror("unknown auth algorithm \"%s\"", $6);
+				free($6);
+				free($7);
+				YYERROR;
+			}
+			free($6);
+
+			if (strlen($7) / 2 != keylen) {
+				yyerror("auth key len: must be %u bytes, "
+				    "is %zu bytes", keylen, strlen($7) / 2);
+				free($7);
+				YYERROR;
+			}
+
+			if ($2)
+				$$.method = AUTH_IPSEC_MANUAL_ESP;
+			else {
+				if ($8.enc_alg) {
+					yyerror("\"ipsec ah\" doesn't take "
+					    "encryption keys");
+					free($7);
+					YYERROR;
+				}
+				$$.method = AUTH_IPSEC_MANUAL_AH;
+			}
+
+			if ($5 <= SPI_RESERVED_MAX || $5 > UINT_MAX) {
+				yyerror("bad spi number %lld", $5);
+				free($7);
+				YYERROR;
+			}
+
+			if ($3 == 1) {
+				if (str2key($7, $$.auth_key_in,
+				    sizeof($$.auth_key_in)) == -1) {
+					free($7);
+					YYERROR;
+				}
+				$$.spi_in = $5;
+				$$.auth_alg_in = auth_alg;
+				$$.enc_alg_in = $8.enc_alg;
+				memcpy(&$$.enc_key_in, &$8.enc_key,
+				    sizeof($$.enc_key_in));
+				$$.enc_keylen_in = $8.enc_key_len;
+				$$.auth_keylen_in = keylen;
+			} else {
+				if (str2key($7, $$.auth_key_out,
+				    sizeof($$.auth_key_out)) == -1) {
+					free($7);
+					YYERROR;
+				}
+				$$.spi_out = $5;
+				$$.auth_alg_out = auth_alg;
+				$$.enc_alg_out = $8.enc_alg;
+				memcpy(&$$.enc_key_out, &$8.enc_key,
+				    sizeof($$.enc_key_out));
+				$$.enc_keylen_out = $8.enc_key_len;
+				$$.auth_keylen_out = keylen;
+			}
+			free($7);
+		}
 		;
 
 espah		: ESP		{ $$ = 1; }
@@ -3543,6 +3538,7 @@ lookup(char *s)
 		{ "ext-community",	EXTCOMMUNITY},
 		{ "fib-priority",	FIBPRIORITY},
 		{ "fib-update",		FIBUPDATE},
+		{ "filtered",		FILTERED},
 		{ "flags",		FLAGS},
 		{ "flowspec",		FLOWSPEC},
 		{ "fragment",		FRAGMENT},
@@ -3578,6 +3574,7 @@ lookup(char *s)
 		{ "med",		MED},
 		{ "metric",		METRIC},
 		{ "min",		YMIN},
+		{ "min-version",	MINVERSION},
 		{ "multihop",		MULTIHOP},
 		{ "neighbor",		NEIGHBOR},
 		{ "neighbor-as",	NEIGHBORAS},
@@ -4343,9 +4340,9 @@ parselargecommunity(struct community *c, char *s)
 	    getcommunity(q, 1, &c->data3, &dflag3) == -1)
 		return (-1);
 	c->flags = COMMUNITY_TYPE_LARGE;
-	c->flags |= dflag1 << 8;;
-	c->flags |= dflag2 << 16;;
-	c->flags |= dflag3 << 24;;
+	c->flags |= dflag1 << 8;
+	c->flags |= dflag2 << 16;
+	c->flags |= dflag3 << 24;
 	return (0);
 }
 
@@ -4485,7 +4482,7 @@ parseextvalue(int type, char *s, uint32_t *v, uint32_t *flag)
 		*v = uval | (uvalh << 16);
 		break;
 	case EXT_COMMUNITY_TRANS_IPV4:
-		if (inet_aton(s, &ip) == 0) {
+		if (inet_pton(AF_INET, s, &ip) != 1) {
 			yyerror("Bad ext-community %s not parseable", s);
 			return (-1);
 		}
@@ -5055,10 +5052,10 @@ neighbor_consistent(struct peer *p)
 	}
 
 	/* with any form of ipsec local-address is required */
-	if ((p->conf.auth.method == AUTH_IPSEC_IKE_ESP ||
-	    p->conf.auth.method == AUTH_IPSEC_IKE_AH ||
-	    p->conf.auth.method == AUTH_IPSEC_MANUAL_ESP ||
-	    p->conf.auth.method == AUTH_IPSEC_MANUAL_AH) &&
+	if ((p->auth_conf.method == AUTH_IPSEC_IKE_ESP ||
+	    p->auth_conf.method == AUTH_IPSEC_IKE_AH ||
+	    p->auth_conf.method == AUTH_IPSEC_MANUAL_ESP ||
+	    p->auth_conf.method == AUTH_IPSEC_MANUAL_AH) &&
 	    local_addr->aid == AID_UNSPEC) {
 		yyerror("neighbors with any form of IPsec configured "
 		    "need local-address to be specified");
@@ -5066,9 +5063,9 @@ neighbor_consistent(struct peer *p)
 	}
 
 	/* with static keying we need both directions */
-	if ((p->conf.auth.method == AUTH_IPSEC_MANUAL_ESP ||
-	    p->conf.auth.method == AUTH_IPSEC_MANUAL_AH) &&
-	    (!p->conf.auth.spi_in || !p->conf.auth.spi_out)) {
+	if ((p->auth_conf.method == AUTH_IPSEC_MANUAL_ESP ||
+	    p->auth_conf.method == AUTH_IPSEC_MANUAL_AH) &&
+	    (!p->auth_conf.spi_in || !p->auth_conf.spi_out)) {
 		yyerror("with manual keyed IPsec, SPIs and keys "
 		    "for both directions are required");
 		return (-1);
@@ -6015,3 +6012,39 @@ geticmpcodebyname(u_long type, char *w, uint8_t aid)
 	}
 	return -1;
 }
+
+static int
+merge_auth_conf(struct auth_config *to, struct auth_config *from)
+{
+	if (to->method != 0) {
+		/* extra magic for manual ipsec rules */
+		if (to->method == from->method &&
+		    (to->method == AUTH_IPSEC_MANUAL_ESP ||
+		    to->method == AUTH_IPSEC_MANUAL_AH)) {
+			if (to->spi_in == 0 && from->spi_in != 0) {
+				to->spi_in = from->spi_in;
+				to->auth_alg_in = from->auth_alg_in;
+				to->enc_alg_in = from->enc_alg_in;
+				memcpy(to->enc_key_in, from->enc_key_in,
+				    sizeof(to->enc_key_in));
+				to->enc_keylen_in = from->enc_keylen_in;
+				to->auth_keylen_in = from->auth_keylen_in;
+				return 1;
+			} else if (to->spi_out == 0 && from->spi_out != 0) {
+				to->spi_out = from->spi_out;
+				to->auth_alg_out = from->auth_alg_out;
+				to->enc_alg_out = from->enc_alg_out;
+				memcpy(to->enc_key_out, from->enc_key_out,
+				    sizeof(to->enc_key_out));
+				to->enc_keylen_out = from->enc_keylen_out;
+				to->auth_keylen_out = from->auth_keylen_out;
+				return 1;
+			}
+		}
+		yyerror("auth method cannot be redefined");
+		return 0;
+	}
+	*to = *from;
+	return 1;
+}
+

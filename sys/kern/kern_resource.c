@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_resource.c,v 1.83 2024/05/22 09:20:22 claudio Exp $	*/
+/*	$OpenBSD: kern_resource.c,v 1.92 2024/10/15 12:26:53 claudio Exp $	*/
 /*	$NetBSD: kern_resource.c,v 1.38 1996/10/23 07:19:38 matthias Exp $	*/
 
 /*-
@@ -64,7 +64,7 @@ struct plimit	*lim_copy(struct plimit *);
 struct plimit	*lim_write_begin(void);
 void		 lim_write_commit(struct plimit *);
 
-void	tuagg_sub(struct tusage *, struct proc *, const struct timespec *);
+void	tuagg_sumup(struct tusage *, const struct tusage *);
 
 /*
  * Patchable maximum data and stack limits.
@@ -198,7 +198,6 @@ donice(struct proc *curp, struct process *chgpr, int n)
 {
 	struct ucred *ucred = curp->p_ucred;
 	struct proc *p;
-	int s;
 
 	if (ucred->cr_uid != 0 && ucred->cr_ruid != 0 &&
 	    ucred->cr_uid != chgpr->ps_ucred->cr_uid &&
@@ -213,11 +212,11 @@ donice(struct proc *curp, struct process *chgpr, int n)
 		return (EACCES);
 	chgpr->ps_nice = n;
 	mtx_enter(&chgpr->ps_mtx);
-	SCHED_LOCK(s);
+	SCHED_LOCK();
 	TAILQ_FOREACH(p, &chgpr->ps_threads, p_thr_link) {
 		setpriority(p, p->p_estcpu, n);
 	}
-	SCHED_UNLOCK(s);
+	SCHED_UNLOCK();
 	mtx_leave(&chgpr->ps_mtx);
 	return (0);
 }
@@ -276,10 +275,10 @@ dosetrlimit(struct proc *p, u_int which, struct rlimit *limp)
 		maxlim = maxsmap;
 		break;
 	case RLIMIT_NOFILE:
-		maxlim = maxfiles;
+		maxlim = atomic_load_int(&maxfiles);
 		break;
 	case RLIMIT_NPROC:
-		maxlim = maxprocess;
+		maxlim = atomic_load_int(&maxprocess);
 		break;
 	default:
 		maxlim = RLIM_INFINITY;
@@ -369,38 +368,110 @@ sys_getrlimit(struct proc *p, void *v, register_t *retval)
 	return (error);
 }
 
+/* Add the counts from *from to *tu, ensuring a consistent read of *from. */ 
 void
-tuagg_sub(struct tusage *tup, struct proc *p, const struct timespec *ts)
+tuagg_sumup(struct tusage *tu, const struct tusage *from)
 {
-	if (ts != NULL)
-		timespecadd(&tup->tu_runtime, ts, &tup->tu_runtime);
-	tup->tu_uticks += p->p_uticks;
-	tup->tu_sticks += p->p_sticks;
-	tup->tu_iticks += p->p_iticks;
+	struct tusage	tmp;
+	uint64_t	enter, leave;
+
+	enter = from->tu_gen;
+	for (;;) {
+		/* the generation number is odd during an update */
+		while (enter & 1) {
+			CPU_BUSY_CYCLE();
+			enter = from->tu_gen;
+		}
+
+		membar_consumer();
+		tmp = *from;
+		membar_consumer();
+		leave = from->tu_gen;
+
+		if (enter == leave)
+			break;
+		enter = leave;
+	}
+
+	tu->tu_uticks += tmp.tu_uticks;
+	tu->tu_sticks += tmp.tu_sticks;
+	tu->tu_iticks += tmp.tu_iticks;
+	timespecadd(&tu->tu_runtime, &tmp.tu_runtime, &tu->tu_runtime);
+}
+
+void
+tuagg_get_proc(struct tusage *tu, struct proc *p)
+{
+	memset(tu, 0, sizeof(*tu));
+	tuagg_sumup(tu, &p->p_tu);
+}
+
+void
+tuagg_get_process(struct tusage *tu, struct process *pr)
+{
+	struct proc *q;
+
+	memset(tu, 0, sizeof(*tu));
+
+	mtx_enter(&pr->ps_mtx);
+	tuagg_sumup(tu, &pr->ps_tu);
+	/* add on all living threads */
+	TAILQ_FOREACH(q, &pr->ps_threads, p_thr_link)
+		tuagg_sumup(tu, &q->p_tu);
+	mtx_leave(&pr->ps_mtx);
 }
 
 /*
- * Aggregate a single thread's immediate time counts into the running
- * totals for the thread and process
+ * Update the process ps_tu usage with the values from proc p while
+ * doing so the times for proc p are reset.
+ * This requires that p is either curproc or SDEAD and that the
+ * IPL is higher than IPL_STATCLOCK. ps_mtx uses IPL_HIGH so
+ * this should always be the case.
  */
 void
-tuagg_locked(struct process *pr, struct proc *p, const struct timespec *ts)
+tuagg_add_process(struct process *pr, struct proc *p)
 {
-	tuagg_sub(&pr->ps_tu, p, ts);
-	tuagg_sub(&p->p_tu, p, ts);
-	p->p_uticks = 0;
-	p->p_sticks = 0;
-	p->p_iticks = 0;
+	MUTEX_ASSERT_LOCKED(&pr->ps_mtx);
+	KASSERT(curproc == p || p->p_stat == SDEAD);
+
+	tu_enter(&pr->ps_tu);
+	tuagg_sumup(&pr->ps_tu, &p->p_tu);
+	tu_leave(&pr->ps_tu);
+
+	/* Now reset CPU time usage for the thread. */
+	timespecclear(&p->p_tu.tu_runtime);
+	p->p_tu.tu_uticks = p->p_tu.tu_sticks = p->p_tu.tu_iticks = 0;
 }
 
 void
-tuagg(struct process *pr, struct proc *p)
+tuagg_add_runtime(void)
 {
-	int s;
+	struct schedstate_percpu *spc = &curcpu()->ci_schedstate;
+	struct proc *p = curproc;
+	struct timespec ts, delta;
 
-	SCHED_LOCK(s);
-	tuagg_locked(pr, p, NULL);
-	SCHED_UNLOCK(s);
+	/*
+	 * Compute the amount of time during which the current
+	 * process was running, and add that to its total so far.
+	 */
+	nanouptime(&ts);
+	if (timespeccmp(&ts, &spc->spc_runtime, <)) {
+#if 0
+		printf("uptime is not monotonic! "
+		    "ts=%lld.%09lu, runtime=%lld.%09lu\n",
+		    (long long)tv.tv_sec, tv.tv_nsec,
+		    (long long)spc->spc_runtime.tv_sec,
+		    spc->spc_runtime.tv_nsec);
+#endif
+		timespecclear(&delta);
+	} else {
+		timespecsub(&ts, &spc->spc_runtime, &delta);
+	}
+	/* update spc_runtime */
+	spc->spc_runtime = ts;
+	tu_enter(&p->p_tu);
+	timespecadd(&p->p_tu.tu_runtime, &delta, &p->p_tu.tu_runtime);
+	tu_leave(&p->p_tu);
 }
 
 /*
@@ -477,6 +548,7 @@ dogetrusage(struct proc *p, int who, struct rusage *rup)
 {
 	struct process *pr = p->p_p;
 	struct proc *q;
+	struct tusage tu = { 0 };
 
 	KERNEL_ASSERT_LOCKED();
 
@@ -487,14 +559,15 @@ dogetrusage(struct proc *p, int who, struct rusage *rup)
 			*rup = *pr->ps_ru;
 		else
 			memset(rup, 0, sizeof(*rup));
+		tuagg_sumup(&tu, &pr->ps_tu);
 
 		/* add on all living threads */
 		TAILQ_FOREACH(q, &pr->ps_threads, p_thr_link) {
 			ruadd(rup, &q->p_ru);
-			tuagg(pr, q);
+			tuagg_sumup(&tu, &q->p_tu);
 		}
 
-		calcru(&pr->ps_tu, &rup->ru_utime, &rup->ru_stime, NULL);
+		calcru(&tu, &rup->ru_utime, &rup->ru_stime, NULL);
 		break;
 
 	case RUSAGE_THREAD:
@@ -513,9 +586,10 @@ dogetrusage(struct proc *p, int who, struct rusage *rup)
 }
 
 void
-ruadd(struct rusage *ru, struct rusage *ru2)
+ruadd(struct rusage *ru, const struct rusage *ru2)
 {
-	long *ip, *ip2;
+	long *ip;
+	const long *ip2;
 	int i;
 
 	timeradd(&ru->ru_utime, &ru2->ru_utime, &ru->ru_utime);
@@ -535,19 +609,21 @@ void
 rucheck(void *arg)
 {
 	struct rlimit rlim;
+	struct tusage tu = { 0 };
 	struct process *pr = arg;
+	struct proc *q;
 	time_t runtime;
-	int s;
 
 	KERNEL_ASSERT_LOCKED();
 
-	SCHED_LOCK(s);
-	runtime = pr->ps_tu.tu_runtime.tv_sec;
-	SCHED_UNLOCK(s);
-
 	mtx_enter(&pr->ps_mtx);
 	rlim = pr->ps_limit->pl_rlimit[RLIMIT_CPU];
+	tuagg_sumup(&tu, &pr->ps_tu);
+	TAILQ_FOREACH(q, &pr->ps_threads, p_thr_link)
+		tuagg_sumup(&tu, &q->p_tu);
 	mtx_leave(&pr->ps_mtx);
+
+	runtime = tu.tu_runtime.tv_sec;
 
 	if ((rlim_t)runtime >= rlim.rlim_cur) {
 		if ((rlim_t)runtime >= rlim.rlim_max) {

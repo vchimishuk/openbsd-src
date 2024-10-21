@@ -1,4 +1,4 @@
-/*	$OpenBSD: nfs_socket.c,v 1.150 2024/04/30 17:05:20 miod Exp $	*/
+/*	$OpenBSD: nfs_socket.c,v 1.154 2024/09/18 05:21:19 jsg Exp $	*/
 /*	$NetBSD: nfs_socket.c,v 1.27 1996/04/15 20:20:00 thorpej Exp $	*/
 
 /*
@@ -374,7 +374,9 @@ nfs_connect(struct nfsmount *nmp, struct nfsreq *rep)
 	mtx_enter(&so->so_rcv.sb_mtx);
 	so->so_rcv.sb_flags |= SB_NOINTR;
 	mtx_leave(&so->so_rcv.sb_mtx);
+	mtx_enter(&so->so_snd.sb_mtx);
 	so->so_snd.sb_flags |= SB_NOINTR;
+	mtx_leave(&so->so_snd.sb_mtx);
 	sounlock(so);
 
 	m_freem(mopt);
@@ -994,10 +996,10 @@ tryagain:
 
 	/*
 	 * Since we only support RPCAUTH_UNIX atm we step over the
-	 * reply verifer type, and in the (error) case that there really
+	 * reply verifier type, and in the (error) case that there really
 	 * is any data in it, we advance over it.
 	 */
-	tl++;			/* Step over verifer type */
+	tl++;			/* Step over verifier type */
 	i = fxdr_unsigned(int32_t, *tl);
 	if (i > 0) {
 		/* Should not happen */
@@ -1018,6 +1020,7 @@ tryagain:
 			if ((nmp->nm_flag & NFSMNT_NFSV3) &&
 			    error == NFSERR_TRYLATER) {
 				m_freem(info.nmi_mrep);
+				info.nmi_mrep = NULL;
 				error = 0;
 				tsleep_nsec(&nowake, PSOCK, "nfsretry",
 				    SEC_TO_NSEC(trylater_delay));
@@ -1122,7 +1125,7 @@ nfs_rephead(int siz, struct nfsrv_descript *nd, struct nfssvc_sock *slp,
 				    *tl = 0;
 			}
 			break;
-		};
+		}
 	}
 
 	*mrq = mreq;

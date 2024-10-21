@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_synch.c,v 1.204 2024/05/22 09:24:11 claudio Exp $	*/
+/*	$OpenBSD: kern_synch.c,v 1.207 2024/10/17 09:11:35 claudio Exp $	*/
 /*	$NetBSD: kern_synch.c,v 1.37 1996/04/22 01:38:37 christos Exp $	*/
 
 /*
@@ -62,7 +62,7 @@
 #include <sys/ktrace.h>
 #endif
 
-int	sleep_signal_check(void);
+int	sleep_signal_check(struct proc *);
 int	thrsleep(struct proc *, struct sys___thrsleep_args *);
 int	thrsleep_unlock(void *);
 
@@ -332,7 +332,6 @@ void
 sleep_setup(const volatile void *ident, int prio, const char *wmesg)
 {
 	struct proc *p = curproc;
-	int s;
 
 #ifdef DIAGNOSTIC
 	if (p->p_flag & P_CANTSLEEP)
@@ -346,7 +345,7 @@ sleep_setup(const volatile void *ident, int prio, const char *wmesg)
 	if (p->p_flag & P_WEXIT)
 		CLR(prio, PCATCH);
 
-	SCHED_LOCK(s);
+	SCHED_LOCK();
 
 	TRACEPOINT(sched, sleep, NULL);
 
@@ -360,14 +359,14 @@ sleep_setup(const volatile void *ident, int prio, const char *wmesg)
 		atomic_setbits_int(&p->p_flag, P_SINTR);
 	p->p_stat = SSLEEP;
 
-	SCHED_UNLOCK(s);
+	SCHED_UNLOCK();
 }
 
 int
 sleep_finish(int timo, int do_sleep)
 {
 	struct proc *p = curproc;
-	int s, catch, error = 0, error1 = 0;
+	int catch, error = 0, error1 = 0;
 
 	catch = p->p_flag & P_SINTR;
 
@@ -386,13 +385,13 @@ sleep_finish(int timo, int do_sleep)
 		 * we must be ready for sleep when sleep_signal_check() is
 		 * called.
 		 */
-		if ((error = sleep_signal_check()) != 0) {
+		if ((error = sleep_signal_check(p)) != 0) {
 			catch = 0;
 			do_sleep = 0;
 		}
 	}
 
-	SCHED_LOCK(s);
+	SCHED_LOCK();
 	/*
 	 * If the wakeup happens while going to sleep, p->p_wchan
 	 * will be NULL. In that case unwind immediately but still
@@ -419,7 +418,7 @@ sleep_finish(int timo, int do_sleep)
 #endif
 
 	p->p_cpu->ci_schedstate.spc_curpriority = p->p_usrpri;
-	SCHED_UNLOCK(s);
+	SCHED_UNLOCK();
 
 	/*
 	 * Even though this belongs to the signal handling part of sleep,
@@ -439,7 +438,7 @@ sleep_finish(int timo, int do_sleep)
 
 	/* Check if thread was woken up because of a unwind or signal */
 	if (catch != 0)
-		error = sleep_signal_check();
+		error = sleep_signal_check(p);
 
 	/* Signal errors are higher priority than timeouts. */
 	if (error == 0 && error1 != 0)
@@ -452,15 +451,14 @@ sleep_finish(int timo, int do_sleep)
  * Check and handle signals and suspensions around a sleep cycle.
  */
 int
-sleep_signal_check(void)
+sleep_signal_check(struct proc *p)
 {
-	struct proc *p = curproc;
 	struct sigctx ctx;
 	int err, sig;
 
 	if ((err = single_thread_check(p, 1)) != 0)
 		return err;
-	if ((sig = cursig(p, &ctx)) != 0) {
+	if ((sig = cursig(p, &ctx, 1)) != 0) {
 		if (ctx.sig_intr)
 			return EINTR;
 		else
@@ -503,11 +501,10 @@ void
 endtsleep(void *arg)
 {
 	struct proc *p = arg;
-	int s;
 
-	SCHED_LOCK(s);
+	SCHED_LOCK();
 	wakeup_proc(p, P_TIMEOUT);
-	SCHED_UNLOCK(s);
+	SCHED_UNLOCK();
 }
 
 /*
@@ -536,11 +533,10 @@ wakeup_n(const volatile void *ident, int n)
 	struct slpque *qp, wakeq;
 	struct proc *p;
 	struct proc *pnext;
-	int s;
 
 	TAILQ_INIT(&wakeq);
 
-	SCHED_LOCK(s);
+	SCHED_LOCK();
 	qp = &slpque[LOOKUP(ident)];
 	for (p = TAILQ_FIRST(qp); p != NULL && n != 0; p = pnext) {
 		pnext = TAILQ_NEXT(p, p_runq);
@@ -564,7 +560,7 @@ wakeup_n(const volatile void *ident, int n)
 		if (p->p_stat == SSLEEP)
 			setrunnable(p);
 	}
-	SCHED_UNLOCK(s);
+	SCHED_UNLOCK();
 }
 
 /*
@@ -581,7 +577,6 @@ sys_sched_yield(struct proc *p, void *v, register_t *retval)
 {
 	struct proc *q;
 	uint8_t newprio;
-	int s;
 
 	/*
 	 * If one of the threads of a multi-threaded process called
@@ -594,11 +589,11 @@ sys_sched_yield(struct proc *p, void *v, register_t *retval)
 		newprio = max(newprio, q->p_runpri);
 	mtx_leave(&p->p_p->ps_mtx);
 
-	SCHED_LOCK(s);
+	SCHED_LOCK();
 	setrunqueue(p->p_cpu, p, newprio);
 	p->p_ru.ru_nvcsw++;
 	mi_switch();
-	SCHED_UNLOCK(s);
+	SCHED_UNLOCK();
 
 	return (0);
 }

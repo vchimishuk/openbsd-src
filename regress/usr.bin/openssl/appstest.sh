@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# $OpenBSD: appstest.sh,v 1.63 2024/03/03 13:29:19 tb Exp $
+# $OpenBSD: appstest.sh,v 1.65 2024/08/23 04:57:12 tb Exp $
 #
 # Copyright (c) 2016 Kinichiro Inoguchi <inoguchi@openbsd.org>
 #
@@ -959,43 +959,6 @@ __EOF__
 
 	#---------#---------#---------#---------#---------#---------#---------
 
-	# --- Netscape SPKAC operations ---
-	section_message "Netscape SPKAC operations"
-
-	# server-admin generates SPKAC
-
-	start_message "spkac"
-	spkacfile=$server_dir/spkac.file
-
-	$openssl_bin spkac -key $genpkey_rsa -challenge hello -out $spkacfile
-	check_exit_status $?
-
-	$openssl_bin spkac -in $spkacfile -verify -out $spkacfile.out
-	check_exit_status $?
-
-	spkacreq=$server_dir/spkac.req
-	cat << __EOF__ > $spkacreq
-countryName = JP
-stateOrProvinceName = Tokyo
-organizationName = TEST_DUMMY_COMPANY
-commonName = spkac.test-dummy.com
-__EOF__
-	cat $spkacfile >> $spkacreq
-
-	# CA signs SPKAC
-	start_message "ca ... CA signs SPKAC csr"
-	spkaccert=$server_dir/spkac.cert
-	$openssl_bin ca -batch -cert $ca_cert -keyfile $ca_key -key $ca_pass \
-		-spkac $spkacreq -out $spkaccert > $spkaccert.log 2>&1
-	check_exit_status $?
-
-	start_message "x509 ... convert DER format SPKAC cert to PEM"
-	spkacpem=$server_dir/spkac.pem
-	$openssl_bin x509 -in $spkaccert -inform DER -out $spkacpem -outform PEM
-	check_exit_status $?
-
-	#---------#---------#---------#---------#---------#---------#---------
-
 	# --- user1 operations (generate user1 key and csr) ---
 	section_message "user1 operations (generate user1 key and csr)"
 
@@ -1440,8 +1403,7 @@ function test_pkcs {
 		-caname "caname_server_p12" \
 		-certpbe AES-256-CBC -keypbe AES-256-CBC -chain \
 		-name "name_server_p12" -des3 -maciter -macalg sha256 \
-		-CSP "csp_server_p12" -LMK -keyex \
-		-passout pass:$pkcs_pass -out $sv_rsa_cert.p12
+		-keyex -passout pass:$pkcs_pass -out $sv_rsa_cert.p12
 	check_exit_status $?
 
 	start_message "pkcs12 ... verify"

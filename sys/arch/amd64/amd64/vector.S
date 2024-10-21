@@ -1,4 +1,4 @@
-/*	$OpenBSD: vector.S,v 1.95 2024/02/12 01:18:17 guenther Exp $	*/
+/*	$OpenBSD: vector.S,v 1.97 2024/09/26 13:18:25 dv Exp $	*/
 /*	$NetBSD: vector.S,v 1.5 2004/06/28 09:13:11 fvdl Exp $	*/
 
 /*
@@ -83,6 +83,7 @@
 #include "assym.h"
 #include "xen.h"
 #include "hyperv.h"
+#include "vmm.h"
 
 /*****************************************************************************/
 
@@ -145,6 +146,7 @@ INTRENTRY_LABEL(calltrap_specstk):
 	SMAP_CLAC
 	movq	%rsp,%rdi
 	call	kerntrap
+	movq	$0,-8(%rsp)
 	movl	$MSR_GSBASE,%ecx	# restore GS.base
 	movq	%r12,%rax
 	movq	%r13,%rdx
@@ -157,6 +159,7 @@ INTRENTRY_LABEL(calltrap_specstk):
 	wrmsr
 	CODEPATCH_END(CPTAG_IBPB_NOP)
 	call	pku_xonly
+	movq	$0,-8(%rsp)
 	popq	%rdi
 	popq	%rsi
 	popq	%rdx
@@ -199,6 +202,7 @@ INTRENTRY_LABEL(trap03):
 	leaq	dt_prov_kprobe, %rdi
 	movq	%rsp, %rsi
 	call	dt_prov_kprobe_hook
+	movq	$0,-8(%rsp)
 	cmpl    $0, %eax
 	je     .Lreal_kern_trap
 
@@ -451,6 +455,7 @@ GENTRY(alltraps)
 recall_trap:
 	movq	%rsp, %rdi
 	call	usertrap
+	movq	$0,-8(%rsp)
 	cli
 	jmp	intr_user_exit
 END(alltraps)
@@ -476,6 +481,7 @@ GENTRY(alltraps_kern_meltdown)
 #endif /* DIAGNOSTIC */
 	movq	%rsp, %rdi
 	call	kerntrap
+	movq	$0,-8(%rsp)
 2:	cli
 #ifndef DIAGNOSTIC
 	INTRFASTEXIT
@@ -489,6 +495,7 @@ GENTRY(alltraps_kern_meltdown)
 	movl	%ebx,%edx
 	xorq	%rax,%rax
 	call	printf
+	movq	$0,-8(%rsp)
 #ifdef DDB
 	int	$3
 #endif /* DDB */
@@ -567,6 +574,7 @@ KIDTVEC_FALLTHROUGH(resume_lapic_ipi)
 	SMAP_CLAC
 	movq	%rbx,IF_PPL(%rsp)
 	call	x86_ipi_handler
+	movq	$0,-8(%rsp)
 	jmp	Xdoreti
 2:
 	movq	$(1 << LIR_IPI),%rax
@@ -593,6 +601,27 @@ IDTVEC(ipi_invltlb)
 	popq	%rax
 	iretq
 END(Xipi_invltlb)
+
+#if NVMM > 0
+/* Invalidate VMX EPT */
+IDTVEC(ipi_invept)
+	pushq	%rax
+	pushq	%rdx
+
+	ioapic_asm_ack()
+
+	movq	$ept_shoot_vid, %rax
+	movq	ept_shoot_mode, %rdx
+	invept	(%rax), %rdx
+
+	lock
+	decq	tlb_shoot_wait
+
+	popq	%rdx
+	popq	%rax
+	iretq
+END(Xipi_invept)
+#endif /* NVMM > 0 */
 
 /* invalidate a single page, no PCIDs version */
 IDTVEC(ipi_invlpg)
@@ -775,6 +804,7 @@ KIDTVEC_FALLTHROUGH(resume_lapic_ltimer)
 	movq	%rbx,IF_PPL(%rsp)
 	xorq	%rdi,%rdi
 	call	lapic_clockintr
+	movq	$0,-8(%rsp)
 	jmp	Xdoreti
 2:
 	movq	$(1 << LIR_TIMER),%rax
@@ -794,6 +824,7 @@ END(Xrecurse_xen_upcall)
 IDTVEC(intr_xen_upcall)
 	INTRENTRY(intr_xen_upcall)
 	call	xen_intr_ack
+	movq	$0,-8(%rsp)
 	movl	CPUVAR(ILEVEL),%ebx
 	cmpl	$IPL_NET,%ebx
 	jae	2f
@@ -808,6 +839,7 @@ KIDTVEC_FALLTHROUGH(resume_xen_upcall)
 	SMAP_CLAC
 	movq	%rbx,IF_PPL(%rsp)
 	call	xen_intr
+	movq	$0,-8(%rsp)
 	jmp	Xdoreti
 2:
 	movq	$(1 << LIR_XEN),%rax
@@ -841,6 +873,7 @@ KIDTVEC_FALLTHROUGH(resume_hyperv_upcall)
 	SMAP_CLAC
 	movq	%rbx,IF_PPL(%rsp)
 	call	hv_intr
+	movq	$0,-8(%rsp)
 	jmp	Xdoreti
 2:
 	movq	$(1 << LIR_HYPERV),%rax
@@ -898,6 +931,7 @@ IDTVEC(intr_##name##num)						;\
 	movq	%rbx, %rsi						;\
 	movq	%rsp, %rdi						;\
 	call	intr_handler		/* call it */			;\
+	movq	$0,-8(%rsp)						;\
 	orl	%eax,%eax		/* should it be counted? */	;\
 	jz	4f			/* no, skip it */		;\
 	incq	IH_COUNT(%rbx)		/* count the intrs */		;\
@@ -1288,6 +1322,7 @@ KIDTVEC(softtty)
 	incl	CPUVAR(IDEPTH)
 	movl	$X86_SOFTINTR_SOFTTTY,%edi
 	call	softintr_dispatch
+	movq	$0,-8(%rsp)
 	decl	CPUVAR(IDEPTH)
 	CODEPATCH_START
 	jmp	retpoline_r13
@@ -1301,6 +1336,7 @@ KIDTVEC(softnet)
 	incl	CPUVAR(IDEPTH)
 	movl	$X86_SOFTINTR_SOFTNET,%edi
 	call	softintr_dispatch
+	movq	$0,-8(%rsp)
 	decl	CPUVAR(IDEPTH)
 	CODEPATCH_START
 	jmp	retpoline_r13
@@ -1314,6 +1350,7 @@ KIDTVEC(softclock)
 	incl	CPUVAR(IDEPTH)
 	movl	$X86_SOFTINTR_SOFTCLOCK,%edi
 	call	softintr_dispatch
+	movq	$0,-8(%rsp)
 	decl	CPUVAR(IDEPTH)
 	CODEPATCH_START
 	jmp	retpoline_r13

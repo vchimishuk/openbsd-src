@@ -1,4 +1,4 @@
-/*	$OpenBSD: pppstats.c,v 1.12 2015/02/09 23:00:14 deraadt Exp $	*/
+/*	$OpenBSD: pppstats.c,v 1.14 2024/08/10 05:32:28 jsg Exp $	*/
 
 /*
  * print PPP statistics:
@@ -82,7 +82,7 @@ void intpr(void);
 int main(int, char *argv[]);
 
 void
-usage()
+usage(void)
 {
 	extern char *__progname;
 
@@ -97,15 +97,13 @@ usage()
  * Sets a flag to not wait for the alarm.
  */
 void
-catchalarm(arg)
-	int arg;
+catchalarm(int arg)
 {
 	signalled = 1;
 }
 
 void
-get_ppp_stats(curp)
-	struct ppp_stats *curp;
+get_ppp_stats(struct ppp_stats *curp)
 {
 	struct ifpppstatsreq req;
 
@@ -122,8 +120,7 @@ get_ppp_stats(curp)
 }
 
 void
-get_ppp_cstats(csp)
-	struct ppp_comp_stats *csp;
+get_ppp_cstats(struct ppp_comp_stats *csp)
 {
 	struct ifpppcstatsreq creq;
 
@@ -158,7 +155,7 @@ get_ppp_cstats(csp)
  * First line printed is cumulative.
  */
 void
-intpr()
+intpr(void)
 {
 	register int line = 0;
 	sigset_t oldmask, mask;
@@ -306,9 +303,7 @@ intpr()
 }
 
 int
-main(argc, argv)
-	int argc;
-	char *argv[];
+main(int argc, char *argv[])
 {
 	int c;
 	struct ifreq ifr;

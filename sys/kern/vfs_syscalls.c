@@ -1,4 +1,4 @@
-/*	$OpenBSD: vfs_syscalls.c,v 1.365 2024/05/18 05:20:22 guenther Exp $	*/
+/*	$OpenBSD: vfs_syscalls.c,v 1.368 2024/09/01 23:26:10 deraadt Exp $	*/
 /*	$NetBSD: vfs_syscalls.c,v 1.71 1996/04/23 10:29:02 mycroft Exp $	*/
 
 /*
@@ -697,10 +697,6 @@ sys_getfsstat(struct proc *p, void *v, register_t *retval)
 			}
 
 			sp->f_flags = mp->mnt_flag & MNT_VISFLAGMASK;
-#if notyet
-			if (mp->mnt_flag & MNT_SOFTDEP)
-				sp->f_eflags = STATFS_SOFTUPD;
-#endif
 			error = (copyout_statfs(sp, sfsp, p));
 			if (error) {
 				vfs_unbusy(mp);
@@ -1975,7 +1971,7 @@ dofaccessat(struct proc *p, int fd, const char *path, int amode, int flag)
 	struct vnode *vp;
 	struct ucred *newcred, *oldcred;
 	struct nameidata nd;
-	int error;
+	int vflags = 0, error;
 
 	if (amode & ~(R_OK | W_OK | X_OK))
 		return (EINVAL);
@@ -2000,21 +1996,20 @@ dofaccessat(struct proc *p, int fd, const char *path, int amode, int flag)
 	NDINITAT(&nd, LOOKUP, FOLLOW | LOCKLEAF, UIO_USERSPACE, fd, path, p);
 	nd.ni_pledge = PLEDGE_RPATH;
 	nd.ni_unveil = UNVEIL_READ;
+	if (amode & R_OK)
+		vflags |= VREAD;
+	if (amode & W_OK) {
+		vflags |= VWRITE;
+		nd.ni_unveil |= UNVEIL_WRITE;
+	}
+	if (amode & X_OK)
+		vflags |= VEXEC;
 	if ((error = namei(&nd)) != 0)
 		goto out;
 	vp = nd.ni_vp;
 
 	/* Flags == 0 means only check for existence. */
 	if (amode) {
-		int vflags = 0;
-
-		if (amode & R_OK)
-			vflags |= VREAD;
-		if (amode & W_OK)
-			vflags |= VWRITE;
-		if (amode & X_OK)
-			vflags |= VEXEC;
-
 		error = VOP_ACCESS(vp, vflags, p->p_ucred, p);
 		if (!error && (vflags & VWRITE))
 			error = vn_writechk(vp);

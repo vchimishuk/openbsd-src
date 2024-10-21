@@ -1,4 +1,4 @@
-/* $OpenBSD: ec_lib.c,v 1.67 2024/04/23 10:52:08 tb Exp $ */
+/* $OpenBSD: ec_lib.c,v 1.72 2024/10/19 08:29:40 tb Exp $ */
 /*
  * Originally written by Bodo Moeller for the OpenSSL project.
  */
@@ -335,11 +335,11 @@ EC_GROUP_set_generator(EC_GROUP *group, const EC_POINT *generator,
 		return 0;
 	}
 
-	if (group->generator == NULL) {
+	if (group->generator == NULL)
 		group->generator = EC_POINT_new(group);
-		if (group->generator == NULL)
-			return 0;
-	}
+	if (group->generator == NULL)
+		return 0;
+
 	if (!EC_POINT_copy(group->generator, generator))
 		return 0;
 
@@ -392,6 +392,12 @@ EC_GROUP_get_cofactor(const EC_GROUP *group, BIGNUM *cofactor, BN_CTX *ctx)
 	return !BN_is_zero(&group->cofactor);
 }
 LCRYPTO_ALIAS(EC_GROUP_get_cofactor);
+
+const BIGNUM *
+EC_GROUP_get0_cofactor(const EC_GROUP *group)
+{
+	return &group->cofactor;
+}
 
 void
 EC_GROUP_set_curve_name(EC_GROUP *group, int nid)
@@ -538,6 +544,27 @@ EC_GROUP_get_curve_GFp(const EC_GROUP *group, BIGNUM *p, BIGNUM *a, BIGNUM *b,
 }
 LCRYPTO_ALIAS(EC_GROUP_get_curve_GFp);
 
+EC_GROUP *
+EC_GROUP_new_curve_GFp(const BIGNUM *p, const BIGNUM *a, const BIGNUM *b,
+    BN_CTX *ctx)
+{
+	EC_GROUP *group;
+
+	if ((group = EC_GROUP_new(EC_GFp_mont_method())) == NULL)
+		goto err;
+
+	if (!EC_GROUP_set_curve(group, p, a, b, ctx))
+		goto err;
+
+	return group;
+
+ err:
+	EC_GROUP_free(group);
+
+	return NULL;
+}
+LCRYPTO_ALIAS(EC_GROUP_new_curve_GFp);
+
 int
 EC_GROUP_get_degree(const EC_GROUP *group)
 {
@@ -573,6 +600,60 @@ EC_GROUP_check_discriminant(const EC_GROUP *group, BN_CTX *ctx_in)
 	return ret;
 }
 LCRYPTO_ALIAS(EC_GROUP_check_discriminant);
+
+int
+EC_GROUP_check(const EC_GROUP *group, BN_CTX *ctx_in)
+{
+	BN_CTX *ctx;
+	EC_POINT *point = NULL;
+	const BIGNUM *order;
+	int ret = 0;
+
+	if ((ctx = ctx_in) == NULL)
+		ctx = BN_CTX_new();
+	if (ctx == NULL)
+		goto err;
+
+	if (!EC_GROUP_check_discriminant(group, ctx)) {
+		ECerror(EC_R_DISCRIMINANT_IS_ZERO);
+		goto err;
+	}
+
+	if (group->generator == NULL) {
+		ECerror(EC_R_UNDEFINED_GENERATOR);
+		goto err;
+	}
+	if (EC_POINT_is_on_curve(group, group->generator, ctx) <= 0) {
+		ECerror(EC_R_POINT_IS_NOT_ON_CURVE);
+		goto err;
+	}
+
+	if ((point = EC_POINT_new(group)) == NULL)
+		goto err;
+	if ((order = EC_GROUP_get0_order(group)) == NULL)
+		goto err;
+	if (BN_is_zero(order)) {
+		ECerror(EC_R_UNDEFINED_ORDER);
+		goto err;
+	}
+	if (!EC_POINT_mul(group, point, order, NULL, NULL, ctx))
+		goto err;
+	if (EC_POINT_is_at_infinity(group, point) <= 0) {
+		ECerror(EC_R_INVALID_GROUP_ORDER);
+		goto err;
+	}
+
+	ret = 1;
+
+ err:
+	if (ctx != ctx_in)
+		BN_CTX_free(ctx);
+
+	EC_POINT_free(point);
+
+	return ret;
+}
+LCRYPTO_ALIAS(EC_GROUP_check);
 
 int
 EC_GROUP_cmp(const EC_GROUP *a, const EC_GROUP *b, BN_CTX *ctx)

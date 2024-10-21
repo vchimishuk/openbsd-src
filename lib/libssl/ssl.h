@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl.h,v 1.237 2024/05/27 09:12:31 jsg Exp $ */
+/* $OpenBSD: ssl.h,v 1.244 2024/10/09 10:27:52 tb Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -653,11 +653,9 @@ void SSL_set_psk_use_session_callback(SSL *s, SSL_psk_use_session_cb_func cb);
 }
 #endif
 
-#include <openssl/ssl2.h>
 #include <openssl/ssl3.h>
 #include <openssl/tls1.h>	/* This is mostly sslv3 with a few tweaks */
 #include <openssl/dtls1.h>	/* Datagram TLS */
-#include <openssl/ssl23.h>
 #include <openssl/srtp.h>	/* Support for the use_srtp extension */
 
 #ifdef  __cplusplus
@@ -1109,6 +1107,7 @@ long SSL_CTX_set_timeout(SSL_CTX *ctx, long t);
 long SSL_CTX_get_timeout(const SSL_CTX *ctx);
 X509_STORE *SSL_CTX_get_cert_store(const SSL_CTX *);
 void SSL_CTX_set_cert_store(SSL_CTX *, X509_STORE *);
+void SSL_CTX_set1_cert_store(SSL_CTX *ctx, X509_STORE *store);
 X509 *SSL_CTX_get0_certificate(const SSL_CTX *ctx);
 EVP_PKEY *SSL_CTX_get0_privatekey(const SSL_CTX *ctx);
 int SSL_want(const SSL *s);
@@ -1127,6 +1126,7 @@ int SSL_CIPHER_get_cipher_nid(const SSL_CIPHER *c);
 int SSL_CIPHER_get_digest_nid(const SSL_CIPHER *c);
 int SSL_CIPHER_get_kx_nid(const SSL_CIPHER *c);
 int SSL_CIPHER_get_auth_nid(const SSL_CIPHER *c);
+const EVP_MD *SSL_CIPHER_get_handshake_digest(const SSL_CIPHER *c);
 int SSL_CIPHER_is_aead(const SSL_CIPHER *c);
 
 int	SSL_get_fd(const SSL *s);
@@ -1479,7 +1479,6 @@ const void *SSL_get_current_expansion(SSL *s);
 
 const char *SSL_COMP_get_name(const void *comp);
 void *SSL_COMP_get_compression_methods(void);
-int SSL_COMP_add_compression_method(int id, void *cm);
 
 /* TLS extensions functions */
 int SSL_set_session_ticket_ext(SSL *s, void *ext_data, int ext_len);
@@ -2240,7 +2239,10 @@ void ERR_load_SSL_strings(void);
 #define SSL_R_SSL_SESSION_ID_HAS_BAD_LENGTH		 303
 #define SSL_R_SSL_SESSION_ID_IS_DIFFERENT		 231
 #define SSL_R_SSL_SESSION_ID_TOO_LONG			 408
+#define SSL_R_TLSV13_ALERT_MISSING_EXTENSION		 1109
+#define SSL_R_TLSV13_ALERT_CERTIFICATE_REQUIRED		 1116
 #define SSL_R_TLSV1_ALERT_ACCESS_DENIED			 1049
+#define SSL_R_TLSV1_ALERT_NO_APPLICATION_PROTOCOL	 1120
 #define SSL_R_TLSV1_ALERT_DECODE_ERROR			 1050
 #define SSL_R_TLSV1_ALERT_DECRYPTION_FAILED		 1021
 #define SSL_R_TLSV1_ALERT_DECRYPT_ERROR			 1051
@@ -2252,6 +2254,7 @@ void ERR_load_SSL_strings(void);
 #define SSL_R_TLSV1_ALERT_PROTOCOL_VERSION		 1070
 #define SSL_R_TLSV1_ALERT_RECORD_OVERFLOW		 1022
 #define SSL_R_TLSV1_ALERT_UNKNOWN_CA			 1048
+#define SSL_R_TLSV1_ALERT_UNKNOWN_PSK_IDENTITY		 1115
 #define SSL_R_TLSV1_ALERT_USER_CANCELLED		 1090
 #define SSL_R_TLSV1_BAD_CERTIFICATE_HASH_VALUE		 1114
 #define SSL_R_TLSV1_BAD_CERTIFICATE_STATUS_RESPONSE	 1113
@@ -2265,7 +2268,6 @@ void ERR_load_SSL_strings(void);
 #define SSL_R_TLS_INVALID_ECPOINTFORMAT_LIST		 157
 #define SSL_R_TLS_PEER_DID_NOT_RESPOND_WITH_CERTIFICATE_LIST 233
 #define SSL_R_TLS_RSA_ENCRYPTED_VALUE_LENGTH_IS_WRONG	 234
-#define SSL_R_TRIED_TO_USE_UNSUPPORTED_CIPHER		 235
 #define SSL_R_UNABLE_TO_DECODE_DH_CERTS			 236
 #define SSL_R_UNABLE_TO_DECODE_ECDH_CERTS		 313
 #define SSL_R_UNABLE_TO_EXTRACT_PUBLIC_KEY		 237
@@ -2330,6 +2332,12 @@ void ERR_load_SSL_strings(void);
 
 int OPENSSL_init_ssl(uint64_t opts, const void *settings);
 int SSL_library_init(void);
+
+/*
+ * A few things still use this without #ifdef guard.
+ */
+
+#define SSL2_VERSION	0x0002
 
 #ifdef  __cplusplus
 }

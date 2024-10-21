@@ -1,4 +1,4 @@
-/*	$OpenBSD: util.c,v 1.85 2024/03/22 15:41:34 claudio Exp $ */
+/*	$OpenBSD: util.c,v 1.88 2024/09/30 12:54:12 claudio Exp $ */
 
 /*
  * Copyright (c) 2006 Claudio Jeker <claudio@openbsd.org>
@@ -98,13 +98,15 @@ log_in6addr(const struct in6_addr *addr)
 const char *
 log_sockaddr(struct sockaddr *sa, socklen_t len)
 {
-	static char	buf[NI_MAXHOST];
+	static char	buf[4][NI_MAXHOST];
+	static int	bufidx;
 
-	if (sa == NULL || getnameinfo(sa, len, buf, sizeof(buf), NULL, 0,
-	    NI_NUMERICHOST))
+	bufidx = (bufidx + 1) % 4;
+	if (sa == NULL || getnameinfo(sa, len, buf[bufidx], sizeof(buf[0]),
+	    NULL, 0, NI_NUMERICHOST))
 		return ("(unknown)");
 	else
-		return (buf);
+		return (buf[bufidx]);
 }
 
 const char *
@@ -159,14 +161,16 @@ const struct ext_comm_pairs iana_ext_comms[] = IANA_EXT_COMMUNITIES;
 const char *
 log_ext_subtype(int type, uint8_t subtype)
 {
-	static char etype[6];
+	static char etype[16];
 	const struct ext_comm_pairs *cp;
 
 	for (cp = iana_ext_comms; cp->subname != NULL; cp++) {
 		if ((type == cp->type || type == -1) && subtype == cp->subtype)
 			return (cp->subname);
 	}
-	snprintf(etype, sizeof(etype), "[%u]", subtype);
+	if (type == -1)
+		return ("???");
+	snprintf(etype, sizeof(etype), "[%hhx:%hhx]", (uint8_t)type, subtype);
 	return (etype);
 }
 
@@ -261,7 +265,7 @@ log_aspath_error(int error)
 
 	switch (error) {
 	case AS_ERR_LEN:
-		return "inconsitent lenght";
+		return "inconsistent length";
 	case AS_ERR_TYPE:
 		return "unknown segment type";
 	case AS_ERR_BAD:

@@ -1,4 +1,4 @@
-/*	$OpenBSD: uvm_map.c,v 1.328 2024/04/02 08:39:17 deraadt Exp $	*/
+/*	$OpenBSD: uvm_map.c,v 1.332 2024/10/21 06:07:33 dlg Exp $	*/
 /*	$NetBSD: uvm_map.c,v 1.86 2000/11/27 08:40:03 chs Exp $	*/
 
 /*
@@ -1346,7 +1346,6 @@ void
 uvm_unmap_detach(struct uvm_map_deadq *deadq, int flags)
 {
 	struct vm_map_entry *entry, *tmp;
-	int waitok = flags & UVM_PLA_WAITOK;
 
 	TAILQ_FOREACH_SAFE(entry, deadq, dfree.deadq, tmp) {
 		/* Drop reference to amap, if we've got one. */
@@ -1356,21 +1355,6 @@ uvm_unmap_detach(struct uvm_map_deadq *deadq, int flags)
 			    atop(entry->end - entry->start),
 			    flags & AMAP_REFALL);
 
-		/* Skip entries for which we have to grab the kernel lock. */
-		if (UVM_ET_ISSUBMAP(entry) || UVM_ET_ISOBJ(entry))
-			continue;
-
-		TAILQ_REMOVE(deadq, entry, dfree.deadq);
-		uvm_mapent_free(entry);
-	}
-
-	if (TAILQ_EMPTY(deadq))
-		return;
-
-	KERNEL_LOCK();
-	while ((entry = TAILQ_FIRST(deadq)) != NULL) {
-		if (waitok)
-			uvm_pause();
 		/* Drop reference to our backing object, if we've got one. */
 		if (UVM_ET_ISSUBMAP(entry)) {
 			/* ... unlikely to happen, but play it safe */
@@ -1381,11 +1365,9 @@ uvm_unmap_detach(struct uvm_map_deadq *deadq, int flags)
 			    entry->object.uvm_obj);
 		}
 
-		/* Step to next. */
 		TAILQ_REMOVE(deadq, entry, dfree.deadq);
 		uvm_mapent_free(entry);
 	}
-	KERNEL_UNLOCK();
 }
 
 void
@@ -1659,7 +1641,7 @@ uvm_map_inentry(struct proc *p, struct p_inentry *ie, vaddr_t addr,
 		ok = uvm_map_inentry_fix(p, ie, addr, fn, serial);
 		if (!ok) {
 			KERNEL_LOCK();
-			printf(fmt, p->p_p->ps_comm, p->p_p->ps_pid, p->p_tid,
+			uprintf(fmt, p->p_p->ps_comm, p->p_p->ps_pid, p->p_tid,
 			    addr, ie->ie_start, ie->ie_end-1);
 			p->p_p->ps_acflag |= AMAP;
 			sv.sival_ptr = (void *)PROC_PC(p);
@@ -1685,11 +1667,8 @@ uvm_map_is_stack_remappable(struct vm_map *map, vaddr_t addr, vaddr_t sz,
 
 	vm_map_assert_anylock(map);
 
-	if (!uvm_map_lookup_entry(map, addr, &first)) {
-		printf("map stack 0x%lx-0x%lx of map %p failed: no mapping\n",
-		    addr, end, map);
+	if (!uvm_map_lookup_entry(map, addr, &first))
 		return FALSE;
-	}
 
 	/*
 	 * Check that the address range exists and is contiguous.
@@ -1707,16 +1686,10 @@ uvm_map_is_stack_remappable(struct vm_map *map, vaddr_t addr, vaddr_t sz,
 		}
 #endif
 
-		if (prev != NULL && prev->end != iter->start) {
-			printf("map stack 0x%lx-0x%lx of map %p failed: "
-			    "hole in range\n", addr, end, map);
+		if (prev != NULL && prev->end != iter->start)
 			return FALSE;
-		}
-		if (iter->start == iter->end || UVM_ET_ISHOLE(iter)) {
-			printf("map stack 0x%lx-0x%lx of map %p failed: "
-			    "hole in range\n", addr, end, map);
+		if (iter->start == iter->end || UVM_ET_ISHOLE(iter))
 			return FALSE;
-		}
 		if (sigaltstack_check) {
 			if (iter->protection != (PROT_READ | PROT_WRITE))
 				return FALSE;
@@ -1740,7 +1713,6 @@ uvm_map_remap_as_stack(struct proc *p, vaddr_t addr, vaddr_t sz)
 {
 	vm_map_t map = &p->p_vmspace->vm_map;
 	vaddr_t start, end;
-	int error;
 	int flags = UVM_MAPFLAG(PROT_READ | PROT_WRITE,
 	    PROT_READ | PROT_WRITE | PROT_EXEC,
 	    MAP_INHERIT_COPY, MADV_NORMAL,
@@ -1767,11 +1739,7 @@ uvm_map_remap_as_stack(struct proc *p, vaddr_t addr, vaddr_t sz)
 	 * placed upon the region, which prevents an attacker from pivoting
 	 * into pre-placed MAP_STACK space.
 	 */
-	error = uvm_mapanon(map, &start, end - start, 0, flags);
-	if (error != 0)
-		printf("map stack for pid %d failed\n", p->p_p->ps_pid);
-
-	return error;
+	return uvm_mapanon(map, &start, end - start, 0, flags);
 }
 
 /*
@@ -2490,10 +2458,6 @@ uvm_map_teardown(struct vm_map *map)
 #endif
 	int			 i;
 
-	KERNEL_ASSERT_LOCKED();
-	KERNEL_UNLOCK();
-	KERNEL_ASSERT_UNLOCKED();
-
 	KASSERT((map->flags & VM_MAP_INTRSAFE) == 0);
 
 	vm_map_lock(map);
@@ -2549,9 +2513,7 @@ uvm_map_teardown(struct vm_map *map)
 		numq++;
 	KASSERT(numt == numq);
 #endif
-	uvm_unmap_detach(&dead_entries, UVM_PLA_WAITOK);
-
-	KERNEL_LOCK();
+	uvm_unmap_detach(&dead_entries, 0);
 
 	pmap_destroy(map->pmap);
 	map->pmap = NULL;
@@ -3431,10 +3393,8 @@ uvmspace_exec(struct proc *p, vaddr_t start, vaddr_t end)
 void
 uvmspace_addref(struct vmspace *vm)
 {
-	KERNEL_ASSERT_LOCKED();
 	KASSERT(vm->vm_refcnt > 0);
-
-	vm->vm_refcnt++;
+	atomic_inc_int(&vm->vm_refcnt);
 }
 
 /*
@@ -3443,9 +3403,7 @@ uvmspace_addref(struct vmspace *vm)
 void
 uvmspace_free(struct vmspace *vm)
 {
-	KERNEL_ASSERT_LOCKED();
-
-	if (--vm->vm_refcnt == 0) {
+	if (atomic_dec_int_nv(&vm->vm_refcnt) == 0) {
 		/*
 		 * lock the map, to wait out all other references to it.  delete
 		 * all of the mappings and pages they hold, then call the pmap
@@ -3453,8 +3411,11 @@ uvmspace_free(struct vmspace *vm)
 		 */
 #ifdef SYSVSHM
 		/* Get rid of any SYSV shared memory segments. */
-		if (vm->vm_shm != NULL)
+		if (vm->vm_shm != NULL) {
+			KERNEL_LOCK();
 			shmexit(vm);
+			KERNEL_UNLOCK();
+		}
 #endif
 
 		uvm_map_teardown(&vm->vm_map);

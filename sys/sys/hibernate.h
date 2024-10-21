@@ -1,4 +1,4 @@
-/*	$OpenBSD: hibernate.h,v 1.45 2022/01/17 02:54:28 mlarkin Exp $	*/
+/*	$OpenBSD: hibernate.h,v 1.47 2024/10/12 07:30:20 jsg Exp $	*/
 
 /*
  * Copyright (c) 2011 Ariane van der Steldt <ariane@stack.nl>
@@ -22,7 +22,6 @@
 #include <sys/types.h>
 #include <sys/tree.h>
 #include <lib/libz/zlib.h>
-#include <machine/vmparam.h>
 #include <crypto/sha2.h>
 
 #define HIB_PHYSSEG_MAX		22
@@ -106,10 +105,11 @@ union hibernate_info {
 		long				guard;
 #endif /* ! NO_PROPOLICE */
 		u_int32_t			retguard_ofs;
+		u_int32_t			sec_size;
 	};
 
-	/* XXX - remove restriction to have this union fit in a single block */
-	char pad[512]; /* Pad to 512 bytes */
+	/* XXX - remove restriction to have the struct fit in a single block */
+	char pad[4096]; /* Pad to largest allowable disk sector size in bytes */
 };
 
 void	*hib_alloc(struct hiballoc_arena*, size_t);

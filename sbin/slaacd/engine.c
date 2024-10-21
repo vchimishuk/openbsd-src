@@ -1,4 +1,4 @@
-/*	$OpenBSD: engine.c,v 1.89 2024/04/21 17:33:05 florian Exp $	*/
+/*	$OpenBSD: engine.c,v 1.93 2024/08/24 16:35:05 florian Exp $	*/
 
 /*
  * Copyright (c) 2017 Florian Obser <florian@openbsd.org>
@@ -242,7 +242,7 @@ void			 engine_dispatch_frontend(int, short, void *);
 void			 engine_dispatch_main(int, short, void *);
 #ifndef	SMALL
 void			 send_interface_info(struct slaacd_iface *, pid_t);
-void			 engine_showinfo_ctl(struct imsg *, uint32_t);
+void			 engine_showinfo_ctl(pid_t, uint32_t);
 void			 debug_log_ra(struct imsg_ra *);
 int			 in6_mask2prefixlen(struct in6_addr *);
 #endif	/* SMALL */
@@ -462,7 +462,7 @@ engine_dispatch_frontend(int fd, short event, void *bula)
 #ifndef	SMALL
 	int				 verbose;
 #endif	/* SMALL */
-	uint32_t			 if_index;
+	uint32_t			 if_index, type;
 
 	if (event & EV_READ) {
 		if ((n = imsg_read(ibuf)) == -1 && errno != EAGAIN)
@@ -483,36 +483,36 @@ engine_dispatch_frontend(int fd, short event, void *bula)
 		if (n == 0)	/* No more messages. */
 			break;
 
-		switch (imsg.hdr.type) {
+		type = imsg_get_type(&imsg);
+
+		switch (type) {
 #ifndef	SMALL
 		case IMSG_CTL_LOG_VERBOSE:
-			if (IMSG_DATA_SIZE(imsg) != sizeof(verbose))
-				fatalx("%s: IMSG_CTL_LOG_VERBOSE wrong length: "
-				    "%lu", __func__, IMSG_DATA_SIZE(imsg));
-			memcpy(&verbose, imsg.data, sizeof(verbose));
+			if (imsg_get_data(&imsg, &verbose,
+			    sizeof(verbose)) == -1)
+				fatalx("%s: invalid %s", __func__, i2s(type));
+
 			log_setverbose(verbose);
 			break;
 		case IMSG_CTL_SHOW_INTERFACE_INFO:
-			if (IMSG_DATA_SIZE(imsg) != sizeof(if_index))
-				fatalx("%s: IMSG_CTL_SHOW_INTERFACE_INFO wrong "
-				    "length: %lu", __func__,
-				    IMSG_DATA_SIZE(imsg));
-			memcpy(&if_index, imsg.data, sizeof(if_index));
-			engine_showinfo_ctl(&imsg, if_index);
+			if (imsg_get_data(&imsg, &if_index,
+			    sizeof(if_index)) == -1)
+				fatalx("%s: invalid %s", __func__, i2s(type));
+
+			engine_showinfo_ctl(imsg_get_pid(&imsg), if_index);
 			break;
 #endif	/* SMALL */
 		case IMSG_REMOVE_IF:
-			if (IMSG_DATA_SIZE(imsg) != sizeof(if_index))
-				fatalx("%s: IMSG_REMOVE_IF wrong length: %lu",
-				    __func__, IMSG_DATA_SIZE(imsg));
-			memcpy(&if_index, imsg.data, sizeof(if_index));
+			if (imsg_get_data(&imsg, &if_index,
+			    sizeof(if_index)) == -1)
+				fatalx("%s: invalid %s", __func__, i2s(type));
+
 			remove_slaacd_iface(if_index);
 			break;
 		case IMSG_RA:
-			if (IMSG_DATA_SIZE(imsg) != sizeof(ra))
-				fatalx("%s: IMSG_RA wrong length: %lu",
-				    __func__, IMSG_DATA_SIZE(imsg));
-			memcpy(&ra, imsg.data, sizeof(ra));
+			if (imsg_get_data(&imsg, &ra, sizeof(ra)) == -1)
+				fatalx("%s: invalid %s", __func__, i2s(type));
+
 			iface = get_slaacd_iface_by_id(ra.if_index);
 
 			/*
@@ -524,11 +524,10 @@ engine_dispatch_frontend(int fd, short event, void *bula)
 				parse_ra(iface, &ra);
 			break;
 		case IMSG_CTL_SEND_SOLICITATION:
-			if (IMSG_DATA_SIZE(imsg) != sizeof(if_index))
-				fatalx("%s: IMSG_CTL_SEND_SOLICITATION wrong "
-				    "length: %lu", __func__,
-				    IMSG_DATA_SIZE(imsg));
-			memcpy(&if_index, imsg.data, sizeof(if_index));
+			if (imsg_get_data(&imsg, &if_index,
+			    sizeof(if_index)) == -1)
+				fatalx("%s: invalid %s", __func__, i2s(type));
+
 			iface = get_slaacd_iface_by_id(if_index);
 			if (iface == NULL)
 				log_warnx("requested to send solicitation on "
@@ -539,10 +538,10 @@ engine_dispatch_frontend(int fd, short event, void *bula)
 			}
 			break;
 		case IMSG_DEL_ADDRESS:
-			if (IMSG_DATA_SIZE(imsg) != sizeof(del_addr))
-				fatalx("%s: IMSG_DEL_ADDRESS wrong length: %lu",
-				    __func__, IMSG_DATA_SIZE(imsg));
-			memcpy(&del_addr, imsg.data, sizeof(del_addr));
+			if (imsg_get_data(&imsg, &del_addr,
+			    sizeof(del_addr)) == -1)
+				fatalx("%s: invalid %s", __func__, i2s(type));
+
 			iface = get_slaacd_iface_by_id(del_addr.if_index);
 			if (iface == NULL) {
 				log_debug("IMSG_DEL_ADDRESS: unknown interface"
@@ -562,10 +561,10 @@ engine_dispatch_frontend(int fd, short event, void *bula)
 				free_address_proposal(addr_proposal);
 			break;
 		case IMSG_DEL_ROUTE:
-			if (IMSG_DATA_SIZE(imsg) != sizeof(del_route))
-				fatalx("%s: IMSG_DEL_ROUTE wrong length: %lu",
-				    __func__, IMSG_DATA_SIZE(imsg));
-			memcpy(&del_route, imsg.data, sizeof(del_route));
+			if (imsg_get_data(&imsg, &del_route,
+			    sizeof(del_route)) == -1)
+				fatalx("%s: invalid %s", __func__, i2s(type));
+
 			iface = get_slaacd_iface_by_id(del_route.if_index);
 			if (iface == NULL) {
 				log_debug("IMSG_DEL_ROUTE: unknown interface"
@@ -582,10 +581,10 @@ engine_dispatch_frontend(int fd, short event, void *bula)
 			}
 			break;
 		case IMSG_DUP_ADDRESS:
-			if (IMSG_DATA_SIZE(imsg) != sizeof(dup_addr))
-				fatalx("%s: IMSG_DUP_ADDRESS wrong length: %lu",
-				    __func__, IMSG_DATA_SIZE(imsg));
-			memcpy(&dup_addr, imsg.data, sizeof(dup_addr));
+			if (imsg_get_data(&imsg, &dup_addr,
+			    sizeof(dup_addr)) == -1)
+				fatalx("%s: invalid %s", __func__, i2s(type));
+
 			iface = get_slaacd_iface_by_id(dup_addr.if_index);
 			if (iface == NULL) {
 				log_debug("IMSG_DUP_ADDRESS: unknown interface"
@@ -606,8 +605,7 @@ engine_dispatch_frontend(int fd, short event, void *bula)
 				    iface->rdomain);
 			break;
 		default:
-			log_debug("%s: unexpected imsg %d", __func__,
-			    imsg.hdr.type);
+			log_debug("%s: unexpected imsg %d", __func__, type);
 			break;
 		}
 		imsg_free(&imsg);
@@ -629,6 +627,7 @@ engine_dispatch_main(int fd, short event, void *bula)
 	struct imsgbuf		*ibuf = &iev->ibuf;
 	struct imsg_ifinfo	 imsg_ifinfo;
 	ssize_t			 n;
+	uint32_t		 type;
 	int			 shut = 0;
 
 	if (event & EV_READ) {
@@ -650,7 +649,9 @@ engine_dispatch_main(int fd, short event, void *bula)
 		if (n == 0)	/* No more messages. */
 			break;
 
-		switch (imsg.hdr.type) {
+		type = imsg_get_type(&imsg);
+
+		switch (type) {
 		case IMSG_SOCKET_IPC:
 			/*
 			 * Setup pipe and event handler to the frontend
@@ -681,15 +682,14 @@ engine_dispatch_main(int fd, short event, void *bula)
 				fatal("pledge");
 			break;
 		case IMSG_UPDATE_IF:
-			if (IMSG_DATA_SIZE(imsg) != sizeof(imsg_ifinfo))
-				fatalx("%s: IMSG_UPDATE_IF wrong length: %lu",
-				    __func__, IMSG_DATA_SIZE(imsg));
-			memcpy(&imsg_ifinfo, imsg.data, sizeof(imsg_ifinfo));
+			if (imsg_get_data(&imsg, &imsg_ifinfo,
+			    sizeof(imsg_ifinfo)) == -1)
+				fatalx("%s: invalid %s", __func__, i2s(type));
+
 			engine_update_iface(&imsg_ifinfo);
 			break;
 		default:
-			log_debug("%s: unexpected imsg %d", __func__,
-			    imsg.hdr.type);
+			log_debug("%s: unexpected imsg %d", __func__, type);
 			break;
 		}
 		imsg_free(&imsg);
@@ -782,7 +782,7 @@ send_interface_info(struct slaacd_iface *iface, pid_t pid)
 	LIST_FOREACH(addr_proposal, &iface->addr_proposals, entries) {
 		memset(&cei_addr_proposal, 0, sizeof(cei_addr_proposal));
 		cei_addr_proposal.id = addr_proposal->id;
-		if(strlcpy(cei_addr_proposal.state,
+		if (strlcpy(cei_addr_proposal.state,
 		    proposal_state_name(addr_proposal->state),
 		    sizeof(cei_addr_proposal.state)) >=
 		    sizeof(cei_addr_proposal.state))
@@ -811,7 +811,7 @@ send_interface_info(struct slaacd_iface *iface, pid_t pid)
 	LIST_FOREACH(dfr_proposal, &iface->dfr_proposals, entries) {
 		memset(&cei_dfr_proposal, 0, sizeof(cei_dfr_proposal));
 		cei_dfr_proposal.id = dfr_proposal->id;
-		if(strlcpy(cei_dfr_proposal.state,
+		if (strlcpy(cei_dfr_proposal.state,
 		    proposal_state_name(dfr_proposal->state),
 		    sizeof(cei_dfr_proposal.state)) >=
 		    sizeof(cei_dfr_proposal.state))
@@ -823,7 +823,7 @@ send_interface_info(struct slaacd_iface *iface, pid_t pid)
 		    cei_dfr_proposal.addr));
 		cei_dfr_proposal.router_lifetime =
 		    dfr_proposal->router_lifetime;
-		if(strlcpy(cei_dfr_proposal.rpref,
+		if (strlcpy(cei_dfr_proposal.rpref,
 		    rpref_name[dfr_proposal->rpref],
 		    sizeof(cei_dfr_proposal.rpref)) >=
 		    sizeof(cei_dfr_proposal.rpref))
@@ -840,7 +840,7 @@ send_interface_info(struct slaacd_iface *iface, pid_t pid)
 	LIST_FOREACH(rdns_proposal, &iface->rdns_proposals, entries) {
 		memset(&cei_rdns_proposal, 0, sizeof(cei_rdns_proposal));
 		cei_rdns_proposal.id = rdns_proposal->id;
-		if(strlcpy(cei_rdns_proposal.state,
+		if (strlcpy(cei_rdns_proposal.state,
 		    proposal_state_name(rdns_proposal->state),
 		    sizeof(cei_rdns_proposal.state)) >=
 		    sizeof(cei_rdns_proposal.state))
@@ -862,26 +862,18 @@ send_interface_info(struct slaacd_iface *iface, pid_t pid)
 }
 
 void
-engine_showinfo_ctl(struct imsg *imsg, uint32_t if_index)
+engine_showinfo_ctl(pid_t pid, uint32_t if_index)
 {
 	struct slaacd_iface			*iface;
 
-	switch (imsg->hdr.type) {
-	case IMSG_CTL_SHOW_INTERFACE_INFO:
-		if (if_index == 0) {
-			LIST_FOREACH (iface, &slaacd_interfaces, entries)
-				send_interface_info(iface, imsg->hdr.pid);
-		} else {
-			if ((iface = get_slaacd_iface_by_id(if_index)) != NULL)
-				send_interface_info(iface, imsg->hdr.pid);
-		}
-		engine_imsg_compose_frontend(IMSG_CTL_END, imsg->hdr.pid, NULL,
-		    0);
-		break;
-	default:
-		log_debug("%s: error handling imsg", __func__);
-		break;
+	if (if_index == 0) {
+		LIST_FOREACH (iface, &slaacd_interfaces, entries)
+			send_interface_info(iface, pid);
+	} else {
+		if ((iface = get_slaacd_iface_by_id(if_index)) != NULL)
+			send_interface_info(iface, pid);
 	}
+	engine_imsg_compose_frontend(IMSG_CTL_END, pid, NULL, 0);
 }
 
 #endif	/* SMALL */
@@ -968,7 +960,6 @@ iface_state_transition(struct slaacd_iface *iface, enum if_state new_state)
 	struct address_proposal	*addr_proposal;
 	struct dfr_proposal	*dfr_proposal;
 	struct rdns_proposal	*rdns_proposal;
-	char			 ifnamebuf[IF_NAMESIZE], *if_name;
 
 	iface->state = new_state;
 
@@ -1025,10 +1016,13 @@ iface_state_transition(struct slaacd_iface *iface, enum if_state new_state)
 		break;
 	}
 
-	if_name = if_indextoname(iface->if_index, ifnamebuf);
-	log_debug("%s[%s] %s -> %s, timo: %lld", __func__, if_name == NULL ?
-	    "?" : if_name, if_state_name(old_state), if_state_name(new_state),
-	    iface->timo.tv_sec);
+	if (log_getverbose()) {
+		char	 ifnamebuf[IF_NAMESIZE], *if_name;
+		if_name = if_indextoname(iface->if_index, ifnamebuf);
+		log_debug("%s[%s] %s -> %s, timo: %lld", __func__,
+		    if_name == NULL ? "?" : if_name, if_state_name(old_state),
+		    if_state_name(new_state), iface->timo.tv_sec);
+	}
 
 	if (iface->timo.tv_sec == -1) {
 		if (evtimer_pending(&iface->timer, NULL))
@@ -1043,7 +1037,6 @@ void addr_proposal_state_transition(struct address_proposal *addr_proposal,
 	enum proposal_state	 old_state = addr_proposal->state;
 	struct slaacd_iface	*iface;
 	uint32_t		 lifetime;
-	char			 ifnamebuf[IF_NAMESIZE], *if_name;
 
 	addr_proposal->state = new_state;
 
@@ -1103,11 +1096,14 @@ void addr_proposal_state_transition(struct address_proposal *addr_proposal,
 		break;
 	}
 
-	if_name = if_indextoname(addr_proposal->if_index, ifnamebuf);
-	log_debug("%s[%s] %s -> %s, timo: %lld", __func__, if_name == NULL ?
-	    "?" : if_name, proposal_state_name(old_state),
-	    proposal_state_name(new_state),
-	    addr_proposal->timo.tv_sec);
+	if (log_getverbose()) {
+		char	 ifnamebuf[IF_NAMESIZE], *if_name;
+		if_name = if_indextoname(addr_proposal->if_index, ifnamebuf);
+		log_debug("%s[%s] %s -> %s, timo: %lld", __func__,
+		    if_name == NULL ? "?" : if_name,
+		    proposal_state_name(old_state),
+		    proposal_state_name(new_state), addr_proposal->timo.tv_sec);
+	}
 
 	if (addr_proposal->timo.tv_sec == -1) {
 		if (evtimer_pending(&addr_proposal->timer, NULL))
@@ -1122,7 +1118,6 @@ void dfr_proposal_state_transition(struct dfr_proposal *dfr_proposal,
 	enum proposal_state	 old_state = dfr_proposal->state;
 	struct slaacd_iface	*iface;
 	uint32_t		 lifetime;
-	char			 ifnamebuf[IF_NAMESIZE], *if_name;
 
 	dfr_proposal->state = new_state;
 
@@ -1176,11 +1171,15 @@ void dfr_proposal_state_transition(struct dfr_proposal *dfr_proposal,
 		break;
 	}
 
-	if_name = if_indextoname(dfr_proposal->if_index, ifnamebuf);
-	log_debug("%s[%s] %s -> %s, timo: %lld", __func__, if_name == NULL ?
-	    "?" : if_name, proposal_state_name(old_state),
-	    proposal_state_name(new_state),
-	    dfr_proposal->timo.tv_sec);
+	if (log_getverbose()) {
+		char	 ifnamebuf[IF_NAMESIZE], *if_name;
+
+		if_name = if_indextoname(dfr_proposal->if_index, ifnamebuf);
+		log_debug("%s[%s] %s -> %s, timo: %lld", __func__,
+		    if_name == NULL ? "?" : if_name,
+		    proposal_state_name(old_state),
+		    proposal_state_name(new_state), dfr_proposal->timo.tv_sec);
+	}
 
 	if (dfr_proposal->timo.tv_sec == -1) {
 		if (evtimer_pending(&dfr_proposal->timer, NULL))
@@ -1196,7 +1195,6 @@ void rdns_proposal_state_transition(struct rdns_proposal *rdns_proposal,
 	enum proposal_state	 old_state = rdns_proposal->state;
 	struct slaacd_iface	*iface;
 	uint32_t		 lifetime;
-	char			 ifnamebuf[IF_NAMESIZE], *if_name;
 
 	rdns_proposal->state = new_state;
 
@@ -1250,11 +1248,15 @@ void rdns_proposal_state_transition(struct rdns_proposal *rdns_proposal,
 		break;
 	}
 
-	if_name = if_indextoname(rdns_proposal->if_index, ifnamebuf);
-	log_debug("%s[%s] %s -> %s, timo: %lld", __func__, if_name == NULL ?
-	    "?" : if_name, proposal_state_name(old_state),
-	    proposal_state_name(new_state),
-	    rdns_proposal->timo.tv_sec);
+	if (log_getverbose()) {
+		char	 ifnamebuf[IF_NAMESIZE], *if_name;
+
+		if_name = if_indextoname(rdns_proposal->if_index, ifnamebuf);
+		log_debug("%s[%s] %s -> %s, timo: %lld", __func__,
+		    if_name == NULL ? "?" : if_name,
+		    proposal_state_name(old_state),
+		    proposal_state_name(new_state), rdns_proposal->timo.tv_sec);
+	}
 
 	if (rdns_proposal->timo.tv_sec == -1) {
 		if (evtimer_pending(&rdns_proposal->timer, NULL))
@@ -1524,7 +1526,7 @@ parse_ra(struct slaacd_iface *iface, struct imsg_ra *ra)
 			in6 = (struct in6_addr*) (p + 6);
 			for (i=0; i < (nd_opt_hdr->nd_opt_len - 1)/2; i++,
 			    in6++) {
-				if((rdns = calloc(1, sizeof(*rdns))) == NULL)
+				if ((rdns = calloc(1, sizeof(*rdns))) == NULL)
 					fatal("calloc");
 				memcpy(&rdns->rdns, in6, sizeof(rdns->rdns));
 				LIST_INSERT_HEAD(&radv->rdns_servers, rdns,
